@@ -258,67 +258,6 @@ class BinanceAutoTrader {
         return !!headerLike;
     }
 
-    // 安全点击：校验位置、黑名单与作用域
-    safeClick(el, purpose = '') {
-        if (!el) return false;
-
-        // 不可见直接放弃
-        if (!this.isVisible(el)) {
-            this.log(`安全保护: 目标不可见，跳过点击(${purpose})`, 'warning');
-            return false;
-        }
-
-        const r = el.getBoundingClientRect();
-        const yGuard = r.top >= 120; // 顶部120px保护带，避免误触导航栏
-        const text = (el.textContent || '').trim();
-        const isDeposit = /充值|存款|Deposit/i.test(text) || el.classList.contains('deposit-btn');
-        const inHeader = this.isInHeader(el);
-
-        // 必须位于交易面板作用域内（确认弹窗/交易关键按钮除外）
-        const formRoot = this.getOrderFormRoot();
-        let inForm = formRoot ? formRoot.contains(el) : true;
-        const isConfirm = /(确认|继续)/.test(text);
-        const isTradeAction = el.classList?.contains('bn-button__buy') || /买入|下单/.test(text);
-
-        // 若是交易关键按钮但未在作用域内，尝试把其上层容器设为新的作用域
-        if (!inForm && isTradeAction) {
-            const panel = el.closest('[role="tabpanel"], form, [class*="panel"], [class*="buySell"], .w-full');
-            if (panel && this.isVisible(panel)) {
-                this.orderRoot = panel;
-                inForm = true;
-                this.log('安全保护: 扩大交易面板作用域以包含目标按钮', 'info');
-            }
-        }
-
-        if (isDeposit || inHeader || !yGuard || (!inForm && !isConfirm && !isTradeAction)) {
-            this.log(`安全保护: 跳过点击(${purpose}) → inHeader=${inHeader}, y=${Math.round(r.top)}, inForm=${inForm}, text="${text}"`, 'warning');
-            return false;
-        }
-
-        // 确保滚动到可见区域中心
-        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
-
-        // 再次校验点击位置没有被遮挡
-        const cx = Math.floor(r.left + Math.min(r.width, 10));
-        const cy = Math.floor(r.top + Math.min(r.height, 10));
-        const topEl = document.elementFromPoint(cx, cy);
-        const coveredByHeader = this.isInHeader(topEl);
-        const coveredByDeposit = topEl && (topEl.classList?.contains('deposit-btn') || /充值|存款|Deposit/i.test(topEl.textContent || ''));
-        if (coveredByHeader || coveredByDeposit) {
-            this.log(`安全保护: 点击位置被header/充值覆盖，跳过点击(${purpose})`, 'warning');
-            return false;
-        }
-
-        // 使用事件触发器更接近真实点击
-        try {
-            el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-            el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        } catch (_) {
-            try { el.click(); } catch (_) {}
-        }
-        return true;
-    }
 
     // Setup and run the real-time trend detector (from trend.js)
     setupTrend() {
@@ -748,11 +687,7 @@ class BinanceAutoTrader {
                 
                 this.log('⏳ 等待下一轮买入...', 'info');
                 
-                // 智能交易模式下，检查是否应该停止
-                if (this.smartTradingMode && this.shouldSmartStop()) {
-                    this.log('🛑 智能交易检测到停止条件，结束交易循环', 'info');
-                    break;
-                }
+                // 智能交易模式下，不检查停止条件，只保留买入信号
                 
                 // 记录当前交易进度
                 if (this.maxTradeCount > 0) {
@@ -881,16 +816,8 @@ class BinanceAutoTrader {
             }
         }
         
-        if (!this.safeClick(reverseOrderCheckbox, '勾选反向订单')) {
-            // 如果由于位置保护被拦截，尝试直接通过键盘事件切换复选框
-            try {
-                reverseOrderCheckbox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                reverseOrderCheckbox.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
-            } catch(_) {}
-            if (!this.safeClick(reverseOrderCheckbox, '勾选反向订单(二次)')) {
-                throw new Error('安全保护阻止点击复选框');
-            }
-        }
+        // 直接点击反向订单复选框
+        reverseOrderCheckbox.click();
         await this.sleep(200);
         
         // 验证是否勾选成功
@@ -1024,14 +951,8 @@ class BinanceAutoTrader {
         }
         
         // 点击切换
-        if (!this.safeClick(buyTab, '切换到买入选项卡')) {
-            // 再次确认不是被header覆盖
-            this.log('首次点击买入选项卡被保护，尝试滚动后重试', 'warning');
-            try { buyTab.scrollIntoView({ block: 'center' }); } catch(_) {}
-            if (!this.safeClick(buyTab, '切换到买入选项卡(二次)')) {
-                throw new Error('安全保护阻止点击买入选项卡');
-            }
-        }
+        // 直接点击买入选项卡
+        buyTab.click();
         this.log('点击买入选项卡', 'info');
         
         // 等待并验证切换结果
@@ -1066,7 +987,7 @@ class BinanceAutoTrader {
                 this.log(`买入选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
                 const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
                 if (buyTab && !buyTab.textContent.includes('充值') && !buyTab.classList.contains('deposit-btn')) {
-                    this.safeClick(buyTab, '重试切换买入选项卡');
+                    buyTab.click();
                 } else {
                     this.log('检测到充值相关元素，跳过重复点击', 'warning');
                 }
@@ -1954,14 +1875,7 @@ class BinanceAutoTrader {
 
     // 检查智能交易条件
     checkSmartTradingConditions() {
-        // 如果正在运行，优先检查停止条件
-        if (this.isRunning && this.shouldSmartStop()) {
-            this.log('智能交易触发停止', 'info');
-            this.stopTrading();
-            return;
-        }
-        
-        // 如果未运行，检查开始条件
+        // 只检查买入条件，不检查停止条件
         if (!this.isRunning) {
             const recentSignals = this.getRecentSignals(3);
             if (recentSignals.length >= 3) {
@@ -2020,17 +1934,6 @@ class BinanceAutoTrader {
         return false;
     }
 
-    // 判断是否应该智能停止
-    shouldSmartStop() {
-        // 出现下降信号立即停止交易
-        if (this.currentTrend === 'falling') {
-            this.log('🚨 检测到下降信号，立即停止交易', 'error');
-            this.log(`当前趋势: ${this.getTrendLabel(this.currentTrend)}`, 'error');
-            return true;
-        }
-        
-        return false;
-    }
 
     // 获取最近N个信号
     getRecentSignals(count) {
