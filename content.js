@@ -1905,6 +1905,9 @@ class BinanceAutoTrader {
         try {
             this.log('🤖 智能交易开始买入', 'info');
             
+            // 重置强制停止标志，确保智能交易可以正常执行
+            this.forceStop = false;
+            
             // 获取交易金额
             let amount = parseFloat(document.getElementById('trade-amount').value);
             if (!amount || amount < 0.1) {
