@@ -1886,7 +1886,8 @@ class BinanceAutoTrader {
             // 智能交易模式下的买入次数统计
             this.currentTradeCount++;
             this.updateTradeCounter();
-            this.startTrading(true); // 传入true表示是智能交易调用
+            // 直接执行单次买入，不启动持续的交易循环
+            this.executeSmartBuy();
         } else {
             // 记录当前信号状态，帮助调试
             if (recentSignals.length >= 3) {
@@ -1896,6 +1897,51 @@ class BinanceAutoTrader {
                     this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
                 }
             }
+        }
+    }
+
+    // 执行智能交易单次买入
+    async executeSmartBuy() {
+        try {
+            this.log('🤖 智能交易开始买入', 'info');
+            
+            // 获取交易金额
+            let amount = parseFloat(document.getElementById('trade-amount').value);
+            if (!amount || amount < 0.1) {
+                this.log('请输入有效金额（≥0.1 USDT）', 'error');
+                return;
+            }
+            
+            // 智能交易模式下的金额调整
+            if (this.buyAmountRatio !== 1.0) {
+                const originalAmount = amount;
+                amount = amount * this.buyAmountRatio;
+                this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
+            }
+            
+            this.log(`💰 交易金额: ${amount} USDT`, 'info');
+            this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
+            
+            // 安全检查
+            if (!this.performSafetyChecks()) {
+                this.log('安全检查失败，取消买入', 'error');
+                return;
+            }
+            
+            // 设置智能交易执行标志
+            this.isSmartTradingExecution = true;
+            
+            // 执行买入操作
+            await this.executeBuy();
+            
+            // 重置智能交易执行标志
+            this.isSmartTradingExecution = false;
+            
+            this.log('✅ 智能交易买入完成', 'success');
+            
+        } catch (error) {
+            this.log(`智能交易买入失败: ${error.message}`, 'error');
+            this.isSmartTradingExecution = false;
         }
     }
 
