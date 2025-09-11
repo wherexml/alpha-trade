@@ -126,7 +126,7 @@ class BinanceAutoTrader {
                         </div>
                         <div class="config-info-item">
                             <span class="config-info-label">买入条件：</span>
-                            <span class="config-info-text">最近3个信号：[上升, 上升, 平缓] → 买入100%金额</span>
+                            <span class="config-info-text">最近3个信号：[上升, 上升, 平缓/上升] → 买入100%金额</span>
                         </div>
                         <div class="config-info-item">
                             <span class="config-info-label">停止条件：</span>
@@ -1771,9 +1771,10 @@ class BinanceAutoTrader {
             return true;
         }
 
-        // 模式2：上升期买入 [上涨, 上涨, 平缓]
-        if (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'flat') {
-            this.log('✅ 检测到买入信号：最近3个信号为[上涨, 上涨, 平缓] → 买入100%', 'success');
+        // 模式2：上升期买入 [上涨, 上涨, 平缓] 或 [上涨, 上涨, 上涨]
+        if ((recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'flat') ||
+            (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising')) {
+            this.log('✅ 检测到买入信号：最近3个信号为[上涨, 上涨, 平缓/上涨] → 买入100%', 'success');
             this.buyAmountRatio = 1.0;
             return true;
         }
