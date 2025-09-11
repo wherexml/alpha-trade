@@ -41,6 +41,9 @@ class BinanceAutoTrader {
         this.consecutiveFlatSignals = 0; // 连续平缓信号计数
         this.requiredConsecutiveFlat = 3; // 需要连续3次平缓信号
         
+        // 智能交易买入比例
+        this.buyAmountRatio = 1.0; // 默认买入100%金额
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -108,31 +111,20 @@ class BinanceAutoTrader {
                     <input type="number" id="config-delay" step="10" min="0" value="100">
                 </div>
                 <div class="config-section">
-                    <div class="config-section-title">自动买入和停止</div>
-                    <div class="config-checkbox-row">
-                        <label class="config-checkbox-label">
-                            <input type="checkbox" id="config-auto-buy" checked>
-                            <span>从下降进入平缓期买入</span>
-                            <span class="config-tooltip" title="需要连续出现3次平缓信号才开始买入">ℹ️</span>
-                        </label>
-                    </div>
-                    <div class="config-checkbox-row">
-                        <label class="config-checkbox-label">
-                            <input type="checkbox" id="config-auto-buy-rise" checked>
-                            <span>从平缓/下降进入上涨期买入</span>
-                        </label>
-                    </div>
-                    <div class="config-checkbox-row">
-                        <label class="config-checkbox-label">
-                            <input type="checkbox" id="config-auto-stop-flat" checked>
-                            <span>从平缓进入下降时停止</span>
-                        </label>
-                    </div>
-                    <div class="config-checkbox-row">
-                        <label class="config-checkbox-label">
-                            <input type="checkbox" id="config-auto-stop-rise" checked>
-                            <span>从上涨进入平缓时停止</span>
-                        </label>
+                    <div class="config-section-title">智能交易策略</div>
+                    <div class="config-info">
+                        <div class="config-info-item">
+                            <span class="config-info-label">买入条件：</span>
+                            <span class="config-info-text">最近3个信号都平缓 → 买入1/2金额</span>
+                        </div>
+                        <div class="config-info-item">
+                            <span class="config-info-label">买入条件：</span>
+                            <span class="config-info-text">最近3个信号有2个上升 → 买入100%金额</span>
+                        </div>
+                        <div class="config-info-item">
+                            <span class="config-info-label">停止条件：</span>
+                            <span class="config-info-text">出现下降信号 → 立即停止</span>
+                        </div>
                     </div>
                 </div>
                 <div class="config-buttons">
@@ -306,10 +298,17 @@ class BinanceAutoTrader {
     async startTrading() {
         if (this.isRunning) return;
 
-        const amount = parseFloat(document.getElementById('trade-amount').value);
+        let amount = parseFloat(document.getElementById('trade-amount').value);
         if (!amount || amount < 0.1) {
             this.log('请输入有效金额（≥0.1 USDT）', 'error');
             return;
+        }
+
+        // 智能交易模式下的金额调整
+        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+            const originalAmount = amount;
+            amount = amount * this.buyAmountRatio;
+            this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
         }
 
         const tradeCount = parseInt(document.getElementById('trade-count').value) || 0;
@@ -503,6 +502,13 @@ class BinanceAutoTrader {
                 }
                 
                 this.log('等待下一轮买入...', 'info');
+                
+                // 智能交易模式下，检查是否应该停止
+                if (this.smartTradingMode && this.shouldSmartStop()) {
+                    this.log('智能交易检测到停止条件，结束交易循环', 'info');
+                    break;
+                }
+                
                 await this.sleep(this.tradeDelay); // 使用配置的延迟时间
 
             } catch (error) {
@@ -1221,18 +1227,10 @@ class BinanceAutoTrader {
         const configAmount = document.getElementById('config-amount');
         const configCount = document.getElementById('config-count');
         const configDelay = document.getElementById('config-delay');
-        const configAutoBuy = document.getElementById('config-auto-buy');
-        const configAutoBuyRise = document.getElementById('config-auto-buy-rise');
-        const configAutoStopFlat = document.getElementById('config-auto-stop-flat');
-        const configAutoStopRise = document.getElementById('config-auto-stop-rise');
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
         configDelay.value = this.tradeDelay || 100;
-        configAutoBuy.checked = this.autoBuyFromFallToFlat;
-        configAutoBuyRise.checked = this.autoBuyFromFlatToRise;
-        configAutoStopFlat.checked = this.autoStopFromFlatToFall;
-        configAutoStopRise.checked = this.autoStopFromRiseToFlat;
     }
 
     // 保存配置
@@ -1256,20 +1254,10 @@ class BinanceAutoTrader {
             return;
         }
         
-        // 获取自动模式配置
-        const autoBuyFromFallToFlat = document.getElementById('config-auto-buy').checked;
-        const autoBuyFromFlatToRise = document.getElementById('config-auto-buy-rise').checked;
-        const autoStopFromFlatToFall = document.getElementById('config-auto-stop-flat').checked;
-        const autoStopFromRiseToFlat = document.getElementById('config-auto-stop-rise').checked;
-        
         // 更新配置
         this.currentAmount = configAmount;
         this.maxTradeCount = configCount;
         this.tradeDelay = configDelay;
-        this.autoBuyFromFallToFlat = autoBuyFromFallToFlat;
-        this.autoBuyFromFlatToRise = autoBuyFromFlatToRise;
-        this.autoStopFromFlatToFall = autoStopFromFlatToFall;
-        this.autoStopFromRiseToFlat = autoStopFromRiseToFlat;
         
         // 更新主界面
         document.getElementById('trade-amount').value = configAmount;
@@ -1280,11 +1268,7 @@ class BinanceAutoTrader {
             amount: configAmount,
             count: configCount,
             delay: configDelay,
-            smartTradingMode: this.smartTradingMode,
-            autoBuyFromFallToFlat: autoBuyFromFallToFlat,
-            autoBuyFromFlatToRise: autoBuyFromFlatToRise,
-            autoStopFromFlatToFall: autoStopFromFlatToFall,
-            autoStopFromRiseToFlat: autoStopFromRiseToFlat
+            smartTradingMode: this.smartTradingMode
         });
         
         this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}ms`, 'success');
@@ -1309,10 +1293,6 @@ class BinanceAutoTrader {
                 
                 // 加载智能交易配置
                 this.smartTradingMode = userConfig.smartTradingMode || false;
-                this.autoBuyFromFallToFlat = userConfig.autoBuyFromFallToFlat !== false;
-                this.autoBuyFromFlatToRise = userConfig.autoBuyFromFlatToRise !== false;
-                this.autoStopFromFlatToFall = userConfig.autoStopFromFlatToFall !== false;
-                this.autoStopFromRiseToFlat = userConfig.autoStopFromRiseToFlat !== false;
                 
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
@@ -1548,30 +1528,39 @@ class BinanceAutoTrader {
 
     // 检查智能交易条件
     checkSmartTradingConditions() {
+        // 如果正在运行，优先检查停止条件
+        if (this.isRunning && this.shouldSmartStop()) {
+            this.log('智能交易触发停止', 'info');
+            this.stopTrading();
+            return;
+        }
+        
+        // 如果未运行，检查开始条件
         if (!this.isRunning && this.shouldSmartStart()) {
             this.log('智能交易触发买入', 'info');
             this.startTrading();
-        } else if (this.isRunning && this.shouldSmartStop()) {
-            this.log('智能交易触发停止', 'info');
-            this.stopTrading();
         }
     }
 
     // 判断是否应该智能开始
     shouldSmartStart() {
-        // 从下降进入平缓期买入（需要连续3次平缓信号）
-        if (this.autoBuyFromFallToFlat && 
-            this.previousTrend === 'falling' && 
-            this.currentTrend === 'flat' &&
-            this.consecutiveFlatSignals >= this.requiredConsecutiveFlat) {
-            this.log(`连续平缓信号达到${this.consecutiveFlatSignals}次，触发买入`, 'info');
+        // 检查最近3个信号
+        const recentSignals = this.getRecentSignals(3);
+        if (recentSignals.length < 3) {
+            return false; // 数据不足
+        }
+
+        // 最近3个信号都处于平缓期，买入设定金额的1/2
+        if (this.allSignalsAreFlat(recentSignals)) {
+            this.log('最近3个信号都处于平缓期，触发买入（1/2金额）', 'info');
+            this.buyAmountRatio = 0.5; // 买入1/2金额
             return true;
         }
-        
-        // 从平缓/下降进入上涨期买入
-        if (this.autoBuyFromFlatToRise && 
-            (this.previousTrend === 'flat' || this.previousTrend === 'falling') && 
-            this.currentTrend === 'rising') {
+
+        // 最近3个信号有2个是上升期，买入设定金额的100%
+        if (this.hasTwoRisingSignals(recentSignals)) {
+            this.log('最近3个信号有2个是上升期，触发买入（100%金额）', 'info');
+            this.buyAmountRatio = 1.0; // 买入100%金额
             return true;
         }
         
@@ -1580,21 +1569,29 @@ class BinanceAutoTrader {
 
     // 判断是否应该智能停止
     shouldSmartStop() {
-        // 从平缓进入下降时停止
-        if (this.autoStopFromFlatToFall && 
-            this.previousTrend === 'flat' && 
-            this.currentTrend === 'falling') {
-            return true;
-        }
-        
-        // 从上涨进入平缓时停止
-        if (this.autoStopFromRiseToFlat && 
-            this.previousTrend === 'rising' && 
-            this.currentTrend === 'flat') {
+        // 出现下降信号立即停止交易
+        if (this.currentTrend === 'falling') {
+            this.log('检测到下降信号，立即停止交易', 'info');
             return true;
         }
         
         return false;
+    }
+
+    // 获取最近N个信号
+    getRecentSignals(count) {
+        return this.trendData.slice(0, count).map(data => data.trend);
+    }
+
+    // 检查所有信号是否都是平缓期
+    allSignalsAreFlat(signals) {
+        return signals.every(signal => signal === 'flat');
+    }
+
+    // 检查是否有2个上升信号
+    hasTwoRisingSignals(signals) {
+        const risingCount = signals.filter(signal => signal === 'rising').length;
+        return risingCount >= 2;
     }
 }
 
