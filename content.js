@@ -475,15 +475,43 @@ class BinanceAutoTrader {
     async clickSuggestedPrice() {
         this.log('点击建议价格按钮...', 'info');
         
-        // 查找建议价格按钮
-        const suggestedPriceBtn = document.querySelector('div.border-0.border-b.border-dotted');
+        // 多种方式查找建议价格按钮
+        let suggestedPriceBtn = null;
+        
+        // 方法1: 精确选择器
+        suggestedPriceBtn = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
+        
+        // 方法2: 包含价格文本的元素
+        if (!suggestedPriceBtn) {
+            const priceElements = document.querySelectorAll('div[class*="text-PrimaryText"][class*="cursor-pointer"]');
+            for (const element of priceElements) {
+                if (element.textContent.includes('$') && element.textContent.match(/\d+\.\d+/)) {
+                    suggestedPriceBtn = element;
+                    break;
+                }
+            }
+        }
+        
+        // 方法3: 通过文本内容查找
+        if (!suggestedPriceBtn) {
+            const allDivs = document.querySelectorAll('div');
+            for (const div of allDivs) {
+                if (div.textContent.includes('$') && 
+                    div.textContent.match(/\d+\.\d+/) && 
+                    div.classList.contains('cursor-pointer')) {
+                    suggestedPriceBtn = div;
+                    break;
+                }
+            }
+        }
+        
         if (!suggestedPriceBtn) {
             throw new Error('未找到建议价格按钮');
         }
         
         suggestedPriceBtn.click();
-        await this.sleep(200);
-        this.log('已点击建议价格按钮', 'success');
+        await this.sleep(300);
+        this.log(`已点击建议价格按钮: ${suggestedPriceBtn.textContent}`, 'success');
     }
 
     // 勾选反向订单
@@ -519,7 +547,7 @@ class BinanceAutoTrader {
         this.log('设置卖出价格...', 'info');
         
         // 等待价格输入框更新
-        await this.sleep(300);
+        await this.sleep(500);
         
         // 从价格输入框中获取实际设置的价格
         const priceInput = document.querySelector('input[step="1e-8"]');
@@ -544,7 +572,7 @@ class BinanceAutoTrader {
             throw new Error('未找到卖出价格输入框');
         }
         
-        // 设置卖出价格
+        // 清空并设置卖出价格
         sellPriceInput.focus();
         sellPriceInput.select();
         sellPriceInput.value = '';
@@ -557,8 +585,19 @@ class BinanceAutoTrader {
         sellPriceInput.dispatchEvent(inputEvent);
         sellPriceInput.dispatchEvent(changeEvent);
         
-        await this.sleep(200);
-        this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
+        // 触发更多事件确保值被正确设置
+        sellPriceInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        sellPriceInput.dispatchEvent(new Event('focus', { bubbles: true }));
+        
+        await this.sleep(300);
+        
+        // 验证设置是否成功
+        const setValue = parseFloat(sellPriceInput.value);
+        if (Math.abs(setValue - sellPrice) < 0.00000001) {
+            this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
+        } else {
+            this.log(`卖出价格设置可能不完整，当前值: ${sellPriceInput.value}`, 'warning');
+        }
     }
 
     // 计算带安全缓冲的买入金额，并做向下取小数位处理，降低超额风险
@@ -1007,7 +1046,7 @@ class BinanceAutoTrader {
             if (storedData && storedData.date === today) {
                 this.dailyTradeCount = storedData.count || 0;
                 this.lastTradeDate = storedData.date;
-            } else {
+        } else {
                 // 新的一天，重置计数
                 this.dailyTradeCount = 0;
                 this.lastTradeDate = today;
@@ -1016,7 +1055,7 @@ class BinanceAutoTrader {
             
             this.updateDailyStatsDisplay();
             this.log(`今日交易次数: ${this.dailyTradeCount}`, 'info');
-        } catch (error) {
+            } catch (error) {
             this.log(`加载每日统计失败: ${error.message}`, 'error');
             this.dailyTradeCount = 0;
             this.updateDailyStatsDisplay();
@@ -1032,7 +1071,7 @@ class BinanceAutoTrader {
                 count: this.dailyTradeCount
             };
             await this.setStorageData('dailyStats', data);
-        } catch (error) {
+                } catch (error) {
             this.log(`保存每日统计失败: ${error.message}`, 'error');
         }
     }
