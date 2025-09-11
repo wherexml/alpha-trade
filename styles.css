@@ -147,29 +147,43 @@
     background: #777;
 }
 
-#binance-auto-trader .auto-control {
+#binance-auto-trader .smart-trading-control {
     text-align: center;
     margin-top: 8px;
 }
 
-#binance-auto-trader .auto-checkbox-label {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
+#binance-auto-trader .smart-trading-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
     cursor: pointer;
     font-size: 12px;
-    color: #ccc;
+    font-weight: bold;
+    transition: all 0.2s;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border: 2px solid #667eea;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
 
-#binance-auto-trader .auto-checkbox {
-    width: 16px;
-    height: 16px;
-    accent-color: #fcd535;
+#binance-auto-trader .smart-trading-btn:hover {
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+    border-color: #5a6fd8;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
 }
 
-#binance-auto-trader .auto-text {
-    user-select: none;
+#binance-auto-trader .smart-trading-btn.active {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    border-color: #ff6b6b;
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+}
+
+#binance-auto-trader .smart-trading-btn.active:hover {
+    background: linear-gradient(135deg, #ff5252 0%, #e74c3c 100%);
+    border-color: #ff5252;
+    box-shadow: 0 6px 16px rgba(255, 107, 107, 0.4);
 }
 
 #binance-auto-trader .config-section {
@@ -209,6 +223,19 @@
 
 #binance-auto-trader .config-checkbox-label span {
     user-select: none;
+}
+
+#binance-auto-trader .config-tooltip {
+    color: #fcd535;
+    cursor: help;
+    font-size: 10px;
+    margin-left: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+#binance-auto-trader .config-tooltip:hover {
+    opacity: 1;
 }
 
 #binance-auto-trader .content {

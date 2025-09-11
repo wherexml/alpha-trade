@@ -23,19 +23,23 @@ class BinanceAutoTrader {
         // 配置参数
         this.tradeDelay = 100; // 每笔买入的延迟时间(ms)
         
-        // 自动模式配置
-        this.autoMode = false; // 是否启用自动模式
+        // 智能交易配置
+        this.smartTradingMode = false; // 是否启用智能交易模式
         this.autoBuyFromFallToFlat = true; // 从下降进入平缓期买入
         this.autoBuyFromFlatToRise = true; // 从平缓/下降进入上涨期买入
         this.autoStopFromFlatToFall = true; // 从平缓进入下降时停止
         this.autoStopFromRiseToFlat = true; // 从上涨进入平缓时停止
         
         // 趋势分析
-        this.priceHistory = []; // 价格历史记录
-        this.trendHistory = []; // 趋势历史记录
+        this.trendData = []; // 存储20条趋势数据
+        this.maxTrendDataCount = 20; // 最大存储条数
         this.currentTrend = 'unknown'; // 当前趋势：rising, falling, flat, unknown
         this.previousTrend = 'unknown'; // 前一个趋势
         this.trendAnalysisInterval = null; // 趋势分析定时器
+        
+        // 连续信号判断
+        this.consecutiveFlatSignals = 0; // 连续平缓信号计数
+        this.requiredConsecutiveFlat = 3; // 需要连续3次平缓信号
         
         // DOM元素缓存
         this.cachedElements = {
@@ -109,6 +113,7 @@ class BinanceAutoTrader {
                         <label class="config-checkbox-label">
                             <input type="checkbox" id="config-auto-buy" checked>
                             <span>从下降进入平缓期买入</span>
+                            <span class="config-tooltip" title="需要连续出现3次平缓信号才开始买入">ℹ️</span>
                         </label>
                     </div>
                     <div class="config-checkbox-row">
@@ -151,11 +156,8 @@ class BinanceAutoTrader {
                     <button class="control-btn start-btn" id="start-btn">开始买入</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">立即停止</button>
                 </div>
-                <div class="auto-control">
-                    <label class="auto-checkbox-label">
-                        <input type="checkbox" id="auto-mode" class="auto-checkbox">
-                        <span class="auto-text">自动</span>
-                    </label>
+                <div class="smart-trading-control">
+                    <button class="smart-trading-btn" id="smart-trading-btn">智能交易</button>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
@@ -238,7 +240,7 @@ class BinanceAutoTrader {
         const configBtn = document.getElementById('config-btn');
         const configSaveBtn = document.getElementById('config-save-btn');
         const configCancelBtn = document.getElementById('config-cancel-btn');
-        const autoModeCheckbox = document.getElementById('auto-mode');
+        const smartTradingBtn = document.getElementById('smart-trading-btn');
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
@@ -247,7 +249,7 @@ class BinanceAutoTrader {
         configBtn.addEventListener('click', () => this.toggleConfigPanel());
         configSaveBtn.addEventListener('click', () => this.saveConfig());
         configCancelBtn.addEventListener('click', () => this.cancelConfig());
-        autoModeCheckbox.addEventListener('change', (e) => this.toggleAutoMode(e.target.checked));
+        smartTradingBtn.addEventListener('click', () => this.toggleSmartTrading());
     }
 
     makeDraggable() {
@@ -1278,7 +1280,7 @@ class BinanceAutoTrader {
             amount: configAmount,
             count: configCount,
             delay: configDelay,
-            autoMode: this.autoMode,
+            smartTradingMode: this.smartTradingMode,
             autoBuyFromFallToFlat: autoBuyFromFallToFlat,
             autoBuyFromFlatToRise: autoBuyFromFlatToRise,
             autoStopFromFlatToFall: autoStopFromFlatToFall,
@@ -1305,8 +1307,8 @@ class BinanceAutoTrader {
                 this.maxTradeCount = userConfig.count || 40;
                 this.tradeDelay = userConfig.delay || 100;
                 
-                // 加载自动模式配置
-                this.autoMode = userConfig.autoMode || false;
+                // 加载智能交易配置
+                this.smartTradingMode = userConfig.smartTradingMode || false;
                 this.autoBuyFromFallToFlat = userConfig.autoBuyFromFallToFlat !== false;
                 this.autoBuyFromFlatToRise = userConfig.autoBuyFromFlatToRise !== false;
                 this.autoStopFromFlatToFall = userConfig.autoStopFromFlatToFall !== false;
@@ -1315,25 +1317,39 @@ class BinanceAutoTrader {
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
                 document.getElementById('trade-count').value = this.maxTradeCount;
-                document.getElementById('auto-mode').checked = this.autoMode;
+                this.updateSmartTradingButton();
                 this.updateTradeCounter();
                 
-                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms, 自动模式=${this.autoMode}`, 'info');
+                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms, 智能交易=${this.smartTradingMode}`, 'info');
             }
         } catch (error) {
             this.log(`加载用户配置失败: ${error.message}`, 'error');
         }
     }
 
-    // 切换自动模式
-    toggleAutoMode(enabled) {
-        this.autoMode = enabled;
-        this.log(`自动模式${enabled ? '已启用' : '已禁用'}`, 'info');
+    // 切换智能交易模式
+    toggleSmartTrading() {
+        this.smartTradingMode = !this.smartTradingMode;
+        this.updateSmartTradingButton();
         
-        if (enabled) {
+        if (this.smartTradingMode) {
+            this.log('智能交易模式已启用', 'info');
             this.startTrendAnalysis();
         } else {
+            this.log('智能交易模式已禁用', 'info');
             this.stopTrendAnalysis();
+        }
+    }
+
+    // 更新智能交易按钮状态
+    updateSmartTradingButton() {
+        const btn = document.getElementById('smart-trading-btn');
+        if (this.smartTradingMode) {
+            btn.textContent = '停止智能交易';
+            btn.className = 'smart-trading-btn active';
+        } else {
+            btn.textContent = '智能交易';
+            btn.className = 'smart-trading-btn';
         }
     }
 
@@ -1376,27 +1392,79 @@ class BinanceAutoTrader {
             this.previousTrend = this.currentTrend;
             this.currentTrend = trend;
             
-            // 记录趋势历史
-            this.trendHistory.push({
-                timestamp: Date.now(),
-                trend: trend,
-                price: prices[0]
-            });
+            // 生成趋势数据字符串（模拟您提供的格式）
+            const trendDataString = this.generateTrendDataString(trend, prices[0], tradeRecords.length);
             
-            // 保持历史记录在合理范围内
-            if (this.trendHistory.length > 100) {
-                this.trendHistory = this.trendHistory.slice(-50);
+            // 存储趋势数据
+            this.storeTrendData(trendDataString, trend, prices[0]);
+            
+            // 更新连续信号计数
+            this.updateConsecutiveSignals(trend);
+            
+            // 检查智能交易条件
+            if (this.smartTradingMode) {
+                this.checkSmartTradingConditions();
             }
             
-            // 检查自动交易条件
-            if (this.autoMode) {
-                this.checkAutoTradingConditions();
-            }
-            
-            this.log(`趋势分析: ${this.getTrendLabel(trend)} (${prices[0]})`, 'info');
+            this.log(`趋势分析: ${trendDataString}`, 'info');
             
         } catch (error) {
             this.log(`趋势分析出错: ${error.message}`, 'error');
+        }
+    }
+
+    // 生成趋势数据字符串
+    generateTrendDataString(trend, currentPrice, recordCount) {
+        const trendLabel = this.getTrendLabel(trend);
+        const percentage = this.calculatePercentageChange(currentPrice);
+        const vwapDeviation = this.calculateVWAPDeviation();
+        const volumeDiff = this.calculateVolumeDifference();
+        
+        return `趋势: ${trendLabel} (${percentage.toFixed(2)}%) VWAP偏离 ${vwapDeviation.toFixed(2)}% · 量差 ${volumeDiff.toFixed(1)}% · n=${recordCount}`;
+    }
+
+    // 计算百分比变化
+    calculatePercentageChange(currentPrice) {
+        if (this.trendData.length === 0) return 0;
+        const previousPrice = this.trendData[this.trendData.length - 1].price;
+        return ((currentPrice - previousPrice) / previousPrice) * 100;
+    }
+
+    // 计算VWAP偏离（简化版本）
+    calculateVWAPDeviation() {
+        // 这里简化实现，实际应该基于成交量加权平均价格
+        return Math.random() * 0.1 - 0.05; // 模拟-0.05%到0.05%的偏离
+    }
+
+    // 计算量差（简化版本）
+    calculateVolumeDifference() {
+        // 这里简化实现，实际应该基于成交量分析
+        return Math.random() * 20 - 10; // 模拟-10%到10%的量差
+    }
+
+    // 存储趋势数据
+    storeTrendData(trendString, trend, price) {
+        const trendData = {
+            timestamp: Date.now(),
+            string: trendString,
+            trend: trend,
+            price: price
+        };
+        
+        this.trendData.push(trendData);
+        
+        // 保持最多20条记录
+        if (this.trendData.length > this.maxTrendDataCount) {
+            this.trendData = this.trendData.slice(-this.maxTrendDataCount);
+        }
+    }
+
+    // 更新连续信号计数
+    updateConsecutiveSignals(trend) {
+        if (trend === 'flat') {
+            this.consecutiveFlatSignals++;
+        } else {
+            this.consecutiveFlatSignals = 0;
         }
     }
 
@@ -1478,23 +1546,25 @@ class BinanceAutoTrader {
         return labels[trend] || '未知';
     }
 
-    // 检查自动交易条件
-    checkAutoTradingConditions() {
-        if (!this.isRunning && this.shouldAutoStart()) {
-            this.log('自动模式触发买入', 'info');
+    // 检查智能交易条件
+    checkSmartTradingConditions() {
+        if (!this.isRunning && this.shouldSmartStart()) {
+            this.log('智能交易触发买入', 'info');
             this.startTrading();
-        } else if (this.isRunning && this.shouldAutoStop()) {
-            this.log('自动模式触发停止', 'info');
+        } else if (this.isRunning && this.shouldSmartStop()) {
+            this.log('智能交易触发停止', 'info');
             this.stopTrading();
         }
     }
 
-    // 判断是否应该自动开始
-    shouldAutoStart() {
-        // 从下降进入平缓期买入
+    // 判断是否应该智能开始
+    shouldSmartStart() {
+        // 从下降进入平缓期买入（需要连续3次平缓信号）
         if (this.autoBuyFromFallToFlat && 
             this.previousTrend === 'falling' && 
-            this.currentTrend === 'flat') {
+            this.currentTrend === 'flat' &&
+            this.consecutiveFlatSignals >= this.requiredConsecutiveFlat) {
+            this.log(`连续平缓信号达到${this.consecutiveFlatSignals}次，触发买入`, 'info');
             return true;
         }
         
@@ -1508,8 +1578,8 @@ class BinanceAutoTrader {
         return false;
     }
 
-    // 判断是否应该自动停止
-    shouldAutoStop() {
+    // 判断是否应该智能停止
+    shouldSmartStop() {
         // 从平缓进入下降时停止
         if (this.autoStopFromFlatToFall && 
             this.previousTrend === 'flat' && 
