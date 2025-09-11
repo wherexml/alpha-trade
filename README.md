@@ -138,12 +138,11 @@
 ## 更新日志
 
 ### v1.7.3
-- 修复智能交易趋势分析停止的问题
-- 恢复setupTrend方法，使用TrendDetector模块进行实时趋势分析
-- 修复toggleSmartTrading方法，移除停止趋势分析的逻辑
-- 恢复renderTrend方法，确保趋势分析持续运行
-- 添加computeActionFromSignals和applyTrendAction方法
-- 确保智能交易模式下趋势分析持续运行，不会在交易过程中停止
+- 修复安全保护机制阻止反向订单复选框点击的问题
+- 在safeClick方法中为反向订单复选框添加特殊处理
+- 允许反向订单复选框通过安全保护检查
+- 确保智能交易模式下的买入操作能够正常勾选反向订单
+- 提高买入操作的稳定性和成功率
 
 ### v1.7.2
 - 重构clickBuyButton方法，简化按钮查找逻辑
