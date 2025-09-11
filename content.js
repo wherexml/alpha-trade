@@ -636,11 +636,53 @@ class BinanceAutoTrader {
     }
 
 
+    // 检查并关闭充值弹窗
+    async checkAndCloseDepositModal() {
+        this.log('检查充值弹窗...', 'info');
+        
+        // 查找充值弹窗的关闭按钮
+        const closeButton = document.querySelector('button[aria-label="Close"]') ||
+                           document.querySelector('button[class*="close"]') ||
+                           document.querySelector('button[class*="Close"]') ||
+                           document.querySelector('.modal-close') ||
+                           document.querySelector('[data-testid="close"]');
+        
+        if (closeButton) {
+            this.log('发现充值弹窗，正在关闭...', 'warning');
+            closeButton.click();
+            await this.sleep(500);
+            this.log('充值弹窗已关闭', 'success');
+        } else {
+            // 检查是否有充值相关的内容显示
+            const allDivs = document.querySelectorAll('div');
+            let depositContent = null;
+            
+            for (const div of allDivs) {
+                if (div.textContent.includes('我没有加密货币资产') ||
+                    div.textContent.includes('已拥有数字资产') ||
+                    div.textContent.includes('C2C 交易') ||
+                    div.textContent.includes('数字货币充值')) {
+                    depositContent = div;
+                    break;
+                }
+            }
+            
+            if (depositContent) {
+                this.log('检测到充值界面，尝试按ESC键关闭...', 'warning');
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+                await this.sleep(500);
+            }
+        }
+    }
+
     async executeBuy() {
         this.tradeStartTime = Date.now(); // 记录交易开始时间
         this.currentState = 'buying';
         this.log('🔄 开始执行买入操作', 'info');
         this.log(`📊 第 ${this.currentTradeCount + 1} 次买入`, 'info');
+
+        // 0. 检查并关闭可能的充值弹窗
+        await this.checkAndCloseDepositModal();
 
         // 1. 确保在买入选项卡
         await this.switchToBuyTab();
@@ -787,16 +829,26 @@ class BinanceAutoTrader {
     async switchToBuyTab() {
         this.log('开始切换到买入选项卡', 'info');
         
-        // 使用缓存的买入选项卡
+        // 使用更精确的选择器，避免误触其他按钮
         let buyTab = this.getCachedElement('buyTab', '#bn-tab-0.bn-tab__buySell');
         if (!buyTab) {
-            buyTab = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
-                    document.querySelector('.bn-tab__buySell:first-child');
+            // 优先使用ID选择器
+            buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
+            if (!buyTab) {
+                // 备用选择器：确保是买入相关的选项卡
+                buyTab = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
+                        document.querySelector('.bn-tab__buySell:first-child');
+            }
             this.cachedElements.buyTab = buyTab;
         }
         
         if (!buyTab) {
             throw new Error('未找到买入选项卡');
+        }
+        
+        // 额外验证：确保不是充值相关的元素
+        if (buyTab.textContent.includes('充值') || buyTab.classList.contains('deposit-btn')) {
+            throw new Error('检测到充值相关元素，跳过点击');
         }
         
         // 检查是否已经是活跃状态
@@ -840,8 +892,10 @@ class BinanceAutoTrader {
             if (i < maxAttempts - 1) {
                 this.log(`买入选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
                 const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
-                if (buyTab) {
+                if (buyTab && !buyTab.textContent.includes('充值') && !buyTab.classList.contains('deposit-btn')) {
                     buyTab.click();
+                } else {
+                    this.log('检测到充值相关元素，跳过重复点击', 'warning');
                 }
             }
         }
@@ -887,9 +941,15 @@ class BinanceAutoTrader {
     async clickBuyButton() {
         let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
         if (!buyButton) {
-            buyButton = document.querySelector('button[class*="buy"]') ||
+            // 使用更精确的选择器，避免误触充值按钮
+            buyButton = document.querySelector('button.bn-button__buy') ||
+                       document.querySelector('button[class*="bn-button__buy"]') ||
                        Array.from(document.querySelectorAll('button')).find(btn => 
-                           btn.textContent.includes('买入') && !btn.disabled
+                           btn.textContent.includes('买入') && 
+                           !btn.textContent.includes('充值') && 
+                           !btn.textContent.includes('卖出') &&
+                           !btn.disabled &&
+                           !btn.classList.contains('deposit-btn')
                        );
             this.cachedElements.buyButton = buyButton;
         }
@@ -898,12 +958,17 @@ class BinanceAutoTrader {
             throw new Error('未找到买入按钮');
         }
 
+        // 额外验证：确保不是充值按钮
+        if (buyButton.textContent.includes('充值') || buyButton.classList.contains('deposit-btn')) {
+            throw new Error('检测到充值按钮，跳过点击');
+        }
+
         if (buyButton.disabled) {
             throw new Error('买入按钮不可用');
         }
 
         buyButton.click();
-        await this.sleep(300); // 减少到300ms
+        await this.sleep(300);
         this.log('点击买入按钮', 'success');
 
         // 检查并处理确认弹窗
