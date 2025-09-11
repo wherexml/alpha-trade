@@ -246,6 +246,41 @@ class BinanceAutoTrader {
         return this.orderRoot;
     }
 
+    // 安全查找元素 - 优先在订单面板内查找，然后全局查找
+    safeFindElement(selectors, purpose = '') {
+        const root = this.getOrderFormRoot();
+        
+        // 首先在订单面板内查找
+        for (const selector of selectors) {
+            try {
+                const element = root.querySelector(selector);
+                if (element) {
+                    this.log(`在订单面板内找到元素: ${purpose} (${selector})`, 'debug');
+                    return element;
+                }
+            } catch (e) {
+                // 选择器可能无效，继续尝试下一个
+            }
+        }
+        
+        // 如果订单面板内没找到，进行全局查找
+        this.log(`订单面板内未找到 ${purpose}，尝试全局查找`, 'warning');
+        for (const selector of selectors) {
+            try {
+                const element = document.querySelector(selector);
+                if (element) {
+                    this.log(`全局查找到元素: ${purpose} (${selector})`, 'debug');
+                    return element;
+                }
+            } catch (e) {
+                // 选择器可能无效，继续尝试下一个
+            }
+        }
+        
+        this.log(`未找到元素: ${purpose}`, 'error');
+        return null;
+    }
+
     isVisible(el) {
         if (!el) return false;
         const r = el.getBoundingClientRect();
@@ -963,8 +998,17 @@ class BinanceAutoTrader {
         
         this.log(`计算卖出价格: ${suggestedPrice} * ${discountMultiplier.toFixed(3)} = ${sellPriceFormatted} (折价率: ${(this.sellDiscountRate * 100).toFixed(1)}%)`, 'info');
         
-        // 查找卖出价格输入框
-        const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
+        // 查找卖出价格输入框 - 使用更灵活的选择器
+        const sellPriceInput = this.safeFindElement([
+            'input[placeholder="限价卖出"]',
+            'input[placeholder*="限价"]',
+            'input[placeholder*="卖出"]',
+            'input[placeholder*="sell"]',
+            'input[placeholder*="Sell"]',
+            'input[step="1e-8"][placeholder*="价"]',
+            'input[type="text"][step="1e-8"]'
+        ], '卖出价格输入框');
+        
         if (!sellPriceInput) {
             throw new Error('未找到卖出价格输入框');
         }
@@ -995,20 +1039,33 @@ class BinanceAutoTrader {
     async switchToBuyTab() {
         this.log('开始切换到买入选项卡', 'info');
         
-        // 使用更精确的选择器，避免误触其他按钮
-        let buyTab = this.getCachedElement('buyTab', '#bn-tab-0.bn-tab__buySell');
-        if (!buyTab) {
-            // 优先使用ID选择器
-            buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
-            if (!buyTab) {
-                // 备用选择器：确保是买入相关的选项卡
-                const tablist = document.querySelector('[role="tablist"], .bn-tabs__buySell');
-                buyTab = tablist ? Array.from(tablist.querySelectorAll('[role="tab"], .bn-tab__buySell')).find(t => /买入|Buy/.test(t.textContent || '')) : null;
-            }
-            this.cachedElements.buyTab = buyTab;
-        }
+        // 使用安全查找方法，优先在订单面板内查找
+        const buyTab = this.safeFindElement([
+            '#bn-tab-0.bn-tab__buySell',
+            '[role="tab"][aria-selected="false"]:has-text("买入")',
+            '[role="tab"]:has-text("买入")',
+            '.bn-tab__buySell:has-text("买入")',
+            '[data-tab-key="buy"]',
+            '[data-tab-key="buySell"]'
+        ], '买入选项卡');
         
         if (!buyTab) {
+            // 如果安全查找失败，尝试通过tablist查找
+            const tablist = this.safeFindElement([
+                '[role="tablist"]',
+                '.bn-tabs__buySell',
+                '.bn-tabs'
+            ], '选项卡列表');
+            
+            if (tablist) {
+                const tabs = Array.from(tablist.querySelectorAll('[role="tab"], .bn-tab__buySell'));
+                const buyTabFromList = tabs.find(t => /买入|Buy/i.test(t.textContent || '') && !/充值|Deposit/i.test(t.textContent || ''));
+                if (buyTabFromList) {
+                    this.log('通过选项卡列表找到买入选项卡', 'info');
+                    return await this.safeClick(buyTabFromList, '切换到买入选项卡');
+                }
+            }
+            
             throw new Error('未找到买入选项卡');
         }
         
@@ -1045,11 +1102,27 @@ class BinanceAutoTrader {
     }
 
     isBuyTabActive() {
-        const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
+        // 使用安全查找方法，优先在订单面板内查找
+        const buyTab = this.safeFindElement([
+            '#bn-tab-0.bn-tab__buySell',
+            '[role="tab"][aria-selected="true"]:has-text("买入")',
+            '[role="tab"][aria-selected="true"]:has-text("Buy")',
+            '.bn-tab__buySell.active:has-text("买入")',
+            '.bn-tab__buySell.active:has-text("Buy")',
+            '[data-tab-key="buy"][aria-selected="true"]',
+            '[data-tab-key="buySell"][aria-selected="true"]'
+        ], '活跃的买入选项卡');
+        
         if (!buyTab) return false;
         
+        // 检查是否真的是买入选项卡（避免误判充值等）
+        const text = buyTab.textContent || '';
+        if (/充值|Deposit/i.test(text) || buyTab.classList.contains('deposit-btn')) {
+            return false;
+        }
+        
         return buyTab.getAttribute('aria-selected') === 'true' && 
-               buyTab.classList.contains('active');
+               (buyTab.classList.contains('active') || buyTab.classList.contains('bn-tab__buySell'));
     }
 
     async waitForBuyTabSwitch(maxAttempts = 6) { // 减少重试次数
@@ -1064,7 +1137,12 @@ class BinanceAutoTrader {
             // 如果切换失败，再次尝试点击
             if (i < maxAttempts - 1) {
                 this.log(`买入选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
-                const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
+                const buyTab = this.safeFindElement([
+                    '#bn-tab-0.bn-tab__buySell',
+                    '[role="tab"]:has-text("买入")',
+                    '.bn-tab__buySell:has-text("买入")'
+                ], '重试买入选项卡');
+                
                 if (buyTab && !buyTab.textContent.includes('充值') && !buyTab.classList.contains('deposit-btn')) {
                     this.safeClick(buyTab, '重试切换买入选项卡');
                 } else {
@@ -1122,51 +1200,34 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
-        const root = this.getOrderFormRoot();
-        let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
-        if (!buyButton) {
-            // 首先在交易面板根节点内查找
-            if (root) {
-                buyButton = root.querySelector('button.bn-button__buy') ||
-                           root.querySelector('button[class*="bn-button__buy"]') ||
-                           Array.from(root.querySelectorAll('button')).find(btn => 
-                               btn.textContent.includes('买入') && 
-                               !btn.textContent.includes('充值') && 
-                               !btn.textContent.includes('卖出') &&
-                               !btn.disabled &&
-                               !btn.classList.contains('deposit-btn')
-                           );
-            }
-            
-            // 如果根节点查找失败，使用全局查找作为备用
-            if (!buyButton) {
-                this.log('在交易面板根节点内未找到买入按钮，尝试全局查找...', 'info');
-                buyButton = document.querySelector('button.bn-button__buy') ||
-                           document.querySelector('button[class*="bn-button__buy"]') ||
-                       Array.from(document.querySelectorAll('button')).find(btn => 
-                               btn.textContent.includes('买入') && 
-                               !btn.textContent.includes('充值') && 
-                               !btn.textContent.includes('卖出') &&
-                               !btn.disabled &&
-                               !btn.classList.contains('deposit-btn')
-                           );
-            }
-            
-            this.cachedElements.buyButton = buyButton;
-        }
-
+        // 使用安全查找方法，优先在订单面板内查找
+        const buyButton = this.safeFindElement([
+            'button.bn-button__buy',
+            'button[class*="bn-button__buy"]',
+            'button:has-text("买入 ZENT")',
+            'button:has-text("买入")',
+            'button:has-text("Buy")'
+        ], '买入按钮');
+        
         if (!buyButton) {
             throw new Error('未找到买入按钮');
         }
-
+        
         // 额外验证：确保不是充值按钮
-        if (buyButton.textContent.includes('充值') || buyButton.classList.contains('deposit-btn')) {
+        const text = buyButton.textContent || '';
+        const classes = buyButton.classList || [];
+        
+        if (/充值|Deposit/i.test(text) || classes.contains('deposit-btn')) {
             throw new Error('检测到充值按钮，跳过点击');
         }
-
+        
+        // 验证按钮状态
         if (buyButton.disabled) {
-            throw new Error('买入按钮不可用');
+            throw new Error('买入按钮已禁用');
         }
+        
+        // 缓存按钮元素
+        this.cachedElements.buyButton = buyButton;
 
         if (!this.safeClick(buyButton, '点击买入按钮')) {
             this.log('首次点击买入按钮被保护，尝试滚动后重试', 'warning');
@@ -1392,36 +1453,56 @@ class BinanceAutoTrader {
     }
 
     async switchToCurrentOrders() {
-        // 切换到当前委托选项卡
-        const currentOrderTab = document.querySelector('[data-tab-key="orderOrder"]') ||
-                               document.querySelector('#bn-tab-orderOrder') ||
-                               Array.from(document.querySelectorAll('[role="tab"]')).find(tab => 
-                                   tab.textContent.includes('当前委托')
-                               );
+        // 切换到当前委托选项卡 - 使用安全查找
+        const currentOrderTab = this.safeFindElement([
+            '[data-tab-key="orderOrder"]',
+            '#bn-tab-orderOrder',
+            '[role="tab"]:has-text("当前委托")',
+            '[role="tab"]:has-text("Current Orders")',
+            '[role="tab"]:has-text("Open Orders")',
+            '.bn-tab:has-text("当前委托")',
+            '.bn-tab:has-text("Current Orders")'
+        ], '当前委托选项卡');
         
         if (currentOrderTab && !currentOrderTab.classList.contains('active')) {
-            currentOrderTab.click();
-            this.log('切换到当前委托选项卡', 'info');
-            await this.sleep(200); // 减少到200ms
+            if (this.safeClick(currentOrderTab, '切换到当前委托选项卡')) {
+                this.log('切换到当前委托选项卡', 'info');
+                await this.sleep(200);
+            } else {
+                this.log('安全保护阻止点击当前委托选项卡', 'warning');
+            }
         }
         
-        // 确保在限价选项卡
-        const limitTab = document.querySelector('[data-tab-key="limit"]') ||
-                        document.querySelector('#bn-tab-limit') ||
-                        Array.from(document.querySelectorAll('[role="tab"]')).find(tab => 
-                            tab.textContent.includes('限价')
-                        );
+        // 确保在限价选项卡 - 使用安全查找
+        const limitTab = this.safeFindElement([
+            '[data-tab-key="limit"]',
+            '#bn-tab-limit',
+            '[role="tab"]:has-text("限价")',
+            '[role="tab"]:has-text("Limit")',
+            '.bn-tab:has-text("限价")',
+            '.bn-tab:has-text("Limit")'
+        ], '限价选项卡');
         
         if (limitTab && !limitTab.classList.contains('active')) {
-            limitTab.click();
-            this.log('切换到限价委托选项卡', 'info');
-            await this.sleep(200); // 减少到200ms
+            if (this.safeClick(limitTab, '切换到限价委托选项卡')) {
+                this.log('切换到限价委托选项卡', 'info');
+                await this.sleep(200);
+            } else {
+                this.log('安全保护阻止点击限价委托选项卡', 'warning');
+            }
         }
     }
 
     getOrderTableRows() {
-        // 查找委托表格中的数据行
-        const tableBody = document.querySelector('.bn-web-table-tbody');
+        // 查找委托表格中的数据行 - 使用安全查找
+        const tableBody = this.safeFindElement([
+            '.bn-web-table-tbody',
+            '.bn-table-tbody',
+            'tbody',
+            '[class*="table-tbody"]',
+            '[class*="table-body"]'
+        ], '委托表格');
+        
         if (!tableBody) {
             this.log('未找到委托表格', 'error');
             return [];
