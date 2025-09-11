@@ -23,6 +23,20 @@ class BinanceAutoTrader {
         // 配置参数
         this.tradeDelay = 100; // 每笔买入的延迟时间(ms)
         
+        // 自动模式配置
+        this.autoMode = false; // 是否启用自动模式
+        this.autoBuyFromFallToFlat = true; // 从下降进入平缓期买入
+        this.autoBuyFromFlatToRise = true; // 从平缓/下降进入上涨期买入
+        this.autoStopFromFlatToFall = true; // 从平缓进入下降时停止
+        this.autoStopFromRiseToFlat = true; // 从上涨进入平缓时停止
+        
+        // 趋势分析
+        this.priceHistory = []; // 价格历史记录
+        this.trendHistory = []; // 趋势历史记录
+        this.currentTrend = 'unknown'; // 当前趋势：rising, falling, flat, unknown
+        this.previousTrend = 'unknown'; // 前一个趋势
+        this.trendAnalysisInterval = null; // 趋势分析定时器
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -89,6 +103,33 @@ class BinanceAutoTrader {
                     <label for="config-delay">延迟时间 (ms):</label>
                     <input type="number" id="config-delay" step="10" min="0" value="100">
                 </div>
+                <div class="config-section">
+                    <div class="config-section-title">自动买入和停止</div>
+                    <div class="config-checkbox-row">
+                        <label class="config-checkbox-label">
+                            <input type="checkbox" id="config-auto-buy" checked>
+                            <span>从下降进入平缓期买入</span>
+                        </label>
+                    </div>
+                    <div class="config-checkbox-row">
+                        <label class="config-checkbox-label">
+                            <input type="checkbox" id="config-auto-buy-rise" checked>
+                            <span>从平缓/下降进入上涨期买入</span>
+                        </label>
+                    </div>
+                    <div class="config-checkbox-row">
+                        <label class="config-checkbox-label">
+                            <input type="checkbox" id="config-auto-stop-flat" checked>
+                            <span>从平缓进入下降时停止</span>
+                        </label>
+                    </div>
+                    <div class="config-checkbox-row">
+                        <label class="config-checkbox-label">
+                            <input type="checkbox" id="config-auto-stop-rise" checked>
+                            <span>从上涨进入平缓时停止</span>
+                        </label>
+                    </div>
+                </div>
                 <div class="config-buttons">
                     <button class="config-save-btn" id="config-save-btn">保存</button>
                     <button class="config-cancel-btn" id="config-cancel-btn">取消</button>
@@ -110,6 +151,12 @@ class BinanceAutoTrader {
                     <button class="control-btn start-btn" id="start-btn">开始买入</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">立即停止</button>
                 </div>
+                <div class="auto-control">
+                    <label class="auto-checkbox-label">
+                        <input type="checkbox" id="auto-mode" class="auto-checkbox">
+                        <span class="auto-text">自动</span>
+                    </label>
+                </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
                 </div>
@@ -118,6 +165,16 @@ class BinanceAutoTrader {
         `;
 
         document.body.appendChild(this.ui);
+        
+        // Insert trend indicator above the first input-row
+        const contentEl = this.ui.querySelector('.content');
+        const firstInputRow = contentEl.querySelector('.input-row');
+        const trendEl = document.createElement('div');
+        trendEl.id = 'trend-indicator';
+        trendEl.className = 'trend-indicator flat';
+        trendEl.textContent = '趋势: 计算中…';
+        contentEl.insertBefore(trendEl, firstInputRow);
+        this.trendIndicator = trendEl;
         
         // 设置默认位置为左下角
         this.ui.style.position = 'fixed';
@@ -134,6 +191,43 @@ class BinanceAutoTrader {
         this.makeDraggable();
         this.loadDailyStats();
         this.loadUserConfig();
+        
+        // Start trend detection
+        this.setupTrend();
+    }
+
+    // Setup and run the real-time trend detector (from trend.js)
+    setupTrend() {
+        if (!window.TrendDetector) {
+            this.log('趋势模块未加载', 'error');
+            return;
+        }
+        try {
+            this.trendDetector = new window.TrendDetector({
+                windowMs: 45000,
+                maxTrades: 300,
+                updateIntervalMs: 800,
+                onUpdate: (s) => this.renderTrend(s)
+            });
+            this.trendDetector.start();
+            this.log('趋势监测已启动', 'info');
+        } catch (e) {
+            this.log(`趋势监测启动失败: ${e.message}`, 'error');
+        }
+    }
+
+    renderTrend(state) {
+        if (!this.trendIndicator || !state) return;
+        const { label, score, details } = state;
+        const pct = (x) => (x * 100).toFixed(2) + '%';
+        const info = details
+            ? `VWAP偏离 ${pct(details.vwapDiff)} · 量差 ${(details.imbalance * 100).toFixed(1)}% · n=${details.nTrades}`
+            : '';
+        this.trendIndicator.textContent = `趋势: ${label} (${(score*100).toFixed(2)}%)  ${info}`;
+        this.trendIndicator.classList.remove('up', 'down', 'flat');
+        if (label === '上涨') this.trendIndicator.classList.add('up');
+        else if (label === '下降') this.trendIndicator.classList.add('down');
+        else this.trendIndicator.classList.add('flat');
     }
 
     setupUIEvents() {
@@ -144,6 +238,7 @@ class BinanceAutoTrader {
         const configBtn = document.getElementById('config-btn');
         const configSaveBtn = document.getElementById('config-save-btn');
         const configCancelBtn = document.getElementById('config-cancel-btn');
+        const autoModeCheckbox = document.getElementById('auto-mode');
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
@@ -152,6 +247,7 @@ class BinanceAutoTrader {
         configBtn.addEventListener('click', () => this.toggleConfigPanel());
         configSaveBtn.addEventListener('click', () => this.saveConfig());
         configCancelBtn.addEventListener('click', () => this.cancelConfig());
+        autoModeCheckbox.addEventListener('change', (e) => this.toggleAutoMode(e.target.checked));
     }
 
     makeDraggable() {
@@ -1123,10 +1219,18 @@ class BinanceAutoTrader {
         const configAmount = document.getElementById('config-amount');
         const configCount = document.getElementById('config-count');
         const configDelay = document.getElementById('config-delay');
+        const configAutoBuy = document.getElementById('config-auto-buy');
+        const configAutoBuyRise = document.getElementById('config-auto-buy-rise');
+        const configAutoStopFlat = document.getElementById('config-auto-stop-flat');
+        const configAutoStopRise = document.getElementById('config-auto-stop-rise');
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
         configDelay.value = this.tradeDelay || 100;
+        configAutoBuy.checked = this.autoBuyFromFallToFlat;
+        configAutoBuyRise.checked = this.autoBuyFromFlatToRise;
+        configAutoStopFlat.checked = this.autoStopFromFlatToFall;
+        configAutoStopRise.checked = this.autoStopFromRiseToFlat;
     }
 
     // 保存配置
@@ -1137,23 +1241,33 @@ class BinanceAutoTrader {
         
         if (isNaN(configAmount) || configAmount < 0.1) {
             this.log('交易金额必须大于等于0.1 USDT', 'error');
-                    return;
-                }
-
+            return;
+        }
+        
         if (isNaN(configCount) || configCount < 0) {
             this.log('交易次数必须大于等于0', 'error');
-                        return;
-                    }
-                    
+            return;
+        }
+        
         if (isNaN(configDelay) || configDelay < 0) {
             this.log('延迟时间必须大于等于0ms', 'error');
-                        return;
+            return;
         }
+        
+        // 获取自动模式配置
+        const autoBuyFromFallToFlat = document.getElementById('config-auto-buy').checked;
+        const autoBuyFromFlatToRise = document.getElementById('config-auto-buy-rise').checked;
+        const autoStopFromFlatToFall = document.getElementById('config-auto-stop-flat').checked;
+        const autoStopFromRiseToFlat = document.getElementById('config-auto-stop-rise').checked;
         
         // 更新配置
         this.currentAmount = configAmount;
         this.maxTradeCount = configCount;
         this.tradeDelay = configDelay;
+        this.autoBuyFromFallToFlat = autoBuyFromFallToFlat;
+        this.autoBuyFromFlatToRise = autoBuyFromFlatToRise;
+        this.autoStopFromFlatToFall = autoStopFromFlatToFall;
+        this.autoStopFromRiseToFlat = autoStopFromRiseToFlat;
         
         // 更新主界面
         document.getElementById('trade-amount').value = configAmount;
@@ -1163,7 +1277,12 @@ class BinanceAutoTrader {
         await this.setStorageData('userConfig', {
             amount: configAmount,
             count: configCount,
-            delay: configDelay
+            delay: configDelay,
+            autoMode: this.autoMode,
+            autoBuyFromFallToFlat: autoBuyFromFallToFlat,
+            autoBuyFromFlatToRise: autoBuyFromFlatToRise,
+            autoStopFromFlatToFall: autoStopFromFlatToFall,
+            autoStopFromRiseToFlat: autoStopFromRiseToFlat
         });
         
         this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}ms`, 'success');
@@ -1186,16 +1305,226 @@ class BinanceAutoTrader {
                 this.maxTradeCount = userConfig.count || 40;
                 this.tradeDelay = userConfig.delay || 100;
                 
+                // 加载自动模式配置
+                this.autoMode = userConfig.autoMode || false;
+                this.autoBuyFromFallToFlat = userConfig.autoBuyFromFallToFlat !== false;
+                this.autoBuyFromFlatToRise = userConfig.autoBuyFromFlatToRise !== false;
+                this.autoStopFromFlatToFall = userConfig.autoStopFromFlatToFall !== false;
+                this.autoStopFromRiseToFlat = userConfig.autoStopFromRiseToFlat !== false;
+                
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
                 document.getElementById('trade-count').value = this.maxTradeCount;
+                document.getElementById('auto-mode').checked = this.autoMode;
                 this.updateTradeCounter();
                 
-                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms`, 'info');
+                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms, 自动模式=${this.autoMode}`, 'info');
             }
         } catch (error) {
             this.log(`加载用户配置失败: ${error.message}`, 'error');
         }
+    }
+
+    // 切换自动模式
+    toggleAutoMode(enabled) {
+        this.autoMode = enabled;
+        this.log(`自动模式${enabled ? '已启用' : '已禁用'}`, 'info');
+        
+        if (enabled) {
+            this.startTrendAnalysis();
+        } else {
+            this.stopTrendAnalysis();
+        }
+    }
+
+    // 开始趋势分析
+    startTrendAnalysis() {
+        if (this.trendAnalysisInterval) {
+            clearInterval(this.trendAnalysisInterval);
+        }
+        
+        this.trendAnalysisInterval = setInterval(() => {
+            this.analyzeTrend();
+        }, 2000); // 每2秒分析一次趋势
+        
+        this.log('趋势分析已启动', 'info');
+    }
+
+    // 停止趋势分析
+    stopTrendAnalysis() {
+        if (this.trendAnalysisInterval) {
+            clearInterval(this.trendAnalysisInterval);
+            this.trendAnalysisInterval = null;
+        }
+        this.log('趋势分析已停止', 'info');
+    }
+
+    // 分析价格趋势
+    analyzeTrend() {
+        try {
+            // 获取成交记录数据
+            const tradeRecords = this.getTradeRecords();
+            if (tradeRecords.length < 5) {
+                return; // 数据不足，无法分析趋势
+            }
+
+            // 提取价格数据
+            const prices = tradeRecords.map(record => record.price);
+            
+            // 计算趋势
+            const trend = this.calculateTrend(prices);
+            this.previousTrend = this.currentTrend;
+            this.currentTrend = trend;
+            
+            // 记录趋势历史
+            this.trendHistory.push({
+                timestamp: Date.now(),
+                trend: trend,
+                price: prices[0]
+            });
+            
+            // 保持历史记录在合理范围内
+            if (this.trendHistory.length > 100) {
+                this.trendHistory = this.trendHistory.slice(-50);
+            }
+            
+            // 检查自动交易条件
+            if (this.autoMode) {
+                this.checkAutoTradingConditions();
+            }
+            
+            this.log(`趋势分析: ${this.getTrendLabel(trend)} (${prices[0]})`, 'info');
+            
+        } catch (error) {
+            this.log(`趋势分析出错: ${error.message}`, 'error');
+        }
+    }
+
+    // 获取成交记录数据
+    getTradeRecords() {
+        const tradeRecords = [];
+        try {
+            const container = document.querySelector('.ReactVirtualized__Grid__innerScrollContainer');
+            if (!container) return tradeRecords;
+            
+            const rows = container.querySelectorAll('div[role="gridcell"]');
+            rows.forEach(row => {
+                const timeElement = row.querySelector('div:first-child');
+                const priceElement = row.querySelector('div:nth-child(2)');
+                const volumeElement = row.querySelector('div:last-child');
+                
+                if (timeElement && priceElement && volumeElement) {
+                    const time = timeElement.textContent.trim();
+                    const priceText = priceElement.textContent.trim();
+                    const volume = volumeElement.textContent.trim();
+                    
+                    // 解析价格
+                    const price = parseFloat(priceText);
+                    if (!isNaN(price)) {
+                        // 判断买入/卖出
+                        const isBuy = priceElement.style.color.includes('Buy');
+                        const isSell = priceElement.style.color.includes('Sell');
+                        
+                        tradeRecords.push({
+                            time: time,
+                            price: price,
+                            volume: volume,
+                            isBuy: isBuy,
+                            isSell: isSell
+                        });
+                    }
+                }
+            });
+        } catch (error) {
+            this.log(`获取成交记录失败: ${error.message}`, 'error');
+        }
+        
+        return tradeRecords;
+    }
+
+    // 计算趋势
+    calculateTrend(prices, windowSize = 10) {
+        if (prices.length < windowSize) {
+            return 'unknown';
+        }
+        
+        const recentPrices = prices.slice(0, windowSize);
+        const oldestPrice = recentPrices[recentPrices.length - 1];
+        const newestPrice = recentPrices[0];
+        
+        const priceChange = newestPrice - oldestPrice;
+        const percentageChange = (priceChange / oldestPrice) * 100;
+        
+        // 趋势判断阈值
+        const threshold = 0.1; // 0.1%
+        
+        if (percentageChange > threshold) {
+            return 'rising';
+        } else if (percentageChange < -threshold) {
+            return 'falling';
+        } else {
+            return 'flat';
+        }
+    }
+
+    // 获取趋势标签
+    getTrendLabel(trend) {
+        const labels = {
+            'rising': '上涨',
+            'falling': '下降',
+            'flat': '平缓',
+            'unknown': '未知'
+        };
+        return labels[trend] || '未知';
+    }
+
+    // 检查自动交易条件
+    checkAutoTradingConditions() {
+        if (!this.isRunning && this.shouldAutoStart()) {
+            this.log('自动模式触发买入', 'info');
+            this.startTrading();
+        } else if (this.isRunning && this.shouldAutoStop()) {
+            this.log('自动模式触发停止', 'info');
+            this.stopTrading();
+        }
+    }
+
+    // 判断是否应该自动开始
+    shouldAutoStart() {
+        // 从下降进入平缓期买入
+        if (this.autoBuyFromFallToFlat && 
+            this.previousTrend === 'falling' && 
+            this.currentTrend === 'flat') {
+            return true;
+        }
+        
+        // 从平缓/下降进入上涨期买入
+        if (this.autoBuyFromFlatToRise && 
+            (this.previousTrend === 'flat' || this.previousTrend === 'falling') && 
+            this.currentTrend === 'rising') {
+            return true;
+        }
+        
+        return false;
+    }
+
+    // 判断是否应该自动停止
+    shouldAutoStop() {
+        // 从平缓进入下降时停止
+        if (this.autoStopFromFlatToFall && 
+            this.previousTrend === 'flat' && 
+            this.currentTrend === 'falling') {
+            return true;
+        }
+        
+        // 从上涨进入平缓时停止
+        if (this.autoStopFromRiseToFlat && 
+            this.previousTrend === 'rising' && 
+            this.currentTrend === 'flat') {
+            return true;
+        }
+        
+        return false;
     }
 }
 

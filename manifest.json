@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "币安Alpha自动买入助手",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "币安Alpha交易页面自动买入策略执行工具",
   "permissions": [
     "activeTab",
@@ -13,7 +13,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.binance.com/zh-CN/alpha/*/*"],
-      "js": ["content.js"],
+      "js": ["trend.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_end"
     }

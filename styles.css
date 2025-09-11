@@ -147,10 +147,101 @@
     background: #777;
 }
 
+#binance-auto-trader .auto-control {
+    text-align: center;
+    margin-top: 8px;
+}
+
+#binance-auto-trader .auto-checkbox-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #ccc;
+}
+
+#binance-auto-trader .auto-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: #fcd535;
+}
+
+#binance-auto-trader .auto-text {
+    user-select: none;
+}
+
+#binance-auto-trader .config-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #444;
+}
+
+#binance-auto-trader .config-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #fcd535;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+#binance-auto-trader .config-checkbox-row {
+    margin-bottom: 8px;
+}
+
+#binance-auto-trader .config-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #ccc;
+    line-height: 1.4;
+}
+
+#binance-auto-trader .config-checkbox-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #fcd535;
+    flex-shrink: 0;
+}
+
+#binance-auto-trader .config-checkbox-label span {
+    user-select: none;
+}
+
 #binance-auto-trader .content {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+/* Trend indicator */
+#binance-auto-trader .trend-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: #262626;
+    font-size: 12px;
+}
+
+#binance-auto-trader .trend-indicator.up {
+    border-color: #2ebd85;
+    color: #2ebd85;
+}
+
+#binance-auto-trader .trend-indicator.down {
+    border-color: #f6465d;
+    color: #f6465d;
+}
+
+#binance-auto-trader .trend-indicator.flat {
+    border-color: #555;
+    color: #bbb;
 }
 
 #binance-auto-trader.minimized .content {
