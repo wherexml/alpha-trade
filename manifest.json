@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "币安Alpha自动交易助手",
+  "version": "1.0.6",
+  "description": "币安Alpha交易页面自动买卖策略执行工具",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.binance.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.binance.com/zh-CN/alpha/*/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "币安Alpha自动交易"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["icon.png"],
+      "matches": ["https://www.binance.com/*"]
+    }
+  ]
+}
