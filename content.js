@@ -449,13 +449,10 @@ class BinanceAutoTrader {
         // 1. 确保在买入选项卡
         await this.switchToBuyTab();
         
-        // 2. 点击建议价格按钮
-        await this.clickSuggestedPrice();
-        
-        // 3. 勾选反向订单
+        // 2. 勾选反向订单
         await this.checkReverseOrder();
         
-        // 4. 设置卖出价格（建议价格下浮1%）
+        // 3. 设置卖出价格（建议价格下浮1%）
         await this.setSellPrice();
         
         // 5. 设置成交额（带安全缓冲，避免实际撮合金额略高于目标）
@@ -471,48 +468,6 @@ class BinanceAutoTrader {
         this.log('买入订单已提交', 'success');
     }
 
-    // 点击建议价格按钮
-    async clickSuggestedPrice() {
-        this.log('点击建议价格按钮...', 'info');
-        
-        // 多种方式查找建议价格按钮
-        let suggestedPriceBtn = null;
-        
-        // 方法1: 精确选择器
-        suggestedPriceBtn = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
-        
-        // 方法2: 包含价格文本的元素
-        if (!suggestedPriceBtn) {
-            const priceElements = document.querySelectorAll('div[class*="text-PrimaryText"][class*="cursor-pointer"]');
-            for (const element of priceElements) {
-                if (element.textContent.includes('$') && element.textContent.match(/\d+\.\d+/)) {
-                    suggestedPriceBtn = element;
-                    break;
-                }
-            }
-        }
-        
-        // 方法3: 通过文本内容查找
-        if (!suggestedPriceBtn) {
-            const allDivs = document.querySelectorAll('div');
-            for (const div of allDivs) {
-                if (div.textContent.includes('$') && 
-                    div.textContent.match(/\d+\.\d+/) && 
-                    div.classList.contains('cursor-pointer')) {
-                    suggestedPriceBtn = div;
-                    break;
-                }
-            }
-        }
-        
-        if (!suggestedPriceBtn) {
-            throw new Error('未找到建议价格按钮');
-        }
-        
-        suggestedPriceBtn.click();
-        await this.sleep(300);
-        this.log(`已点击建议价格按钮: ${suggestedPriceBtn.textContent}`, 'success');
-    }
 
     // 勾选反向订单
     async checkReverseOrder() {
@@ -542,11 +497,11 @@ class BinanceAutoTrader {
         }
     }
 
-    // 设置卖出价格（建议价格下浮1%）
+    // 设置买入价格和卖出价格
     async setSellPrice() {
-        this.log('设置卖出价格...', 'info');
+        this.log('设置买入价格和卖出价格...', 'info');
         
-        // 直接从建议价格文本中获取价格
+        // 1. 获取建议价格
         const suggestedPriceText = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
         if (!suggestedPriceText) {
             // 备用查找方式
@@ -576,11 +531,31 @@ class BinanceAutoTrader {
             throw new Error('建议价格格式无效');
         }
         
-        // 计算下浮1%的价格
-        const sellPrice = suggestedPrice * 0.99;
-        const formattedPrice = sellPrice.toFixed(8); // 保留8位小数
+        this.log(`获取到建议价格: ${suggestedPrice}`, 'info');
         
-        this.log(`建议价格: ${suggestedPrice}, 卖出价格: ${formattedPrice}`, 'info');
+        // 2. 设置买入价格
+        const buyPriceInput = document.querySelector('input[step="1e-8"]');
+        if (!buyPriceInput) {
+            throw new Error('未找到买入价格输入框');
+        }
+        
+        // 设置买入价格
+        buyPriceInput.focus();
+        buyPriceInput.select();
+        buyPriceInput.value = '';
+        
+        const buyPriceFormatted = suggestedPrice.toFixed(8);
+        buyPriceInput.value = buyPriceFormatted;
+        buyPriceInput.dispatchEvent(new Event('input', { bubbles: true }));
+        buyPriceInput.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        this.log(`买入价格设置完成: ${buyPriceFormatted}`, 'success');
+        
+        // 3. 计算并设置卖出价格（下浮1%）
+        const sellPrice = suggestedPrice * 0.99;
+        const sellPriceFormatted = sellPrice.toFixed(8);
+        
+        this.log(`计算卖出价格: ${suggestedPrice} * 0.99 = ${sellPriceFormatted}`, 'info');
         
         // 查找卖出价格输入框
         const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
@@ -588,21 +563,17 @@ class BinanceAutoTrader {
             throw new Error('未找到卖出价格输入框');
         }
         
-        // 清空并设置卖出价格
+        // 设置卖出价格
         sellPriceInput.focus();
         sellPriceInput.select();
         sellPriceInput.value = '';
         
-        // 模拟输入
-        const inputEvent = new Event('input', { bubbles: true });
-        const changeEvent = new Event('change', { bubbles: true });
-        
-        sellPriceInput.value = formattedPrice;
-        sellPriceInput.dispatchEvent(inputEvent);
-        sellPriceInput.dispatchEvent(changeEvent);
+        sellPriceInput.value = sellPriceFormatted;
+        sellPriceInput.dispatchEvent(new Event('input', { bubbles: true }));
+        sellPriceInput.dispatchEvent(new Event('change', { bubbles: true }));
         
         await this.sleep(200);
-        this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
+        this.log(`卖出价格设置完成: ${sellPriceFormatted}`, 'success');
     }
 
     // 计算带安全缓冲的买入金额，并做向下取小数位处理，降低超额风险
