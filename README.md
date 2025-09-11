@@ -137,6 +137,14 @@
 
 ## 更新日志
 
+### v1.7.3
+- 修复智能交易趋势分析停止的问题
+- 恢复setupTrend方法，使用TrendDetector模块进行实时趋势分析
+- 修复toggleSmartTrading方法，移除停止趋势分析的逻辑
+- 恢复renderTrend方法，确保趋势分析持续运行
+- 添加computeActionFromSignals和applyTrendAction方法
+- 确保智能交易模式下趋势分析持续运行，不会在交易过程中停止
+
 ### v1.7.2
 - 重构clickBuyButton方法，简化按钮查找逻辑
 - 优化缓存机制，提高按钮查找效率

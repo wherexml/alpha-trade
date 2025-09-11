@@ -1700,16 +1700,10 @@ class BinanceAutoTrader {
                 this.log('停止智能交易，正在停止所有交易...', 'warning');
                 this.stopTrading();
             }
-            
-            // 停止趋势分析
-            this.stopTrendAnalysis();
         } else {
             // 启用智能交易模式
             this.smartTradingMode = true;
             this.log('智能交易模式已启用', 'info');
-            
-            // 开始趋势分析
-            this.startTrendAnalysis();
         }
         
         this.updateSmartTradingButton();
@@ -1728,26 +1722,24 @@ class BinanceAutoTrader {
         }
     }
 
-    // 开始趋势分析
-    startTrendAnalysis() {
-        if (this.trendAnalysisInterval) {
-            clearInterval(this.trendAnalysisInterval);
+    // Setup and run the real-time trend detector (from trend.js)
+    setupTrend() {
+        if (!window.TrendDetector) {
+            this.log('趋势模块未加载', 'error');
+            return;
         }
-        
-        this.trendAnalysisInterval = setInterval(() => {
-            this.analyzeTrend();
-        }, 2000); // 每2秒分析一次趋势
-        
-        this.log('趋势分析已启动', 'info');
-    }
-
-    // 停止趋势分析
-    stopTrendAnalysis() {
-        if (this.trendAnalysisInterval) {
-            clearInterval(this.trendAnalysisInterval);
-            this.trendAnalysisInterval = null;
+        try {
+            this.trendDetector = new window.TrendDetector({
+                windowMs: 45000,
+                maxTrades: 300,
+                updateIntervalMs: 800,
+                onUpdate: (s) => this.renderTrend(s)
+            });
+            this.trendDetector.start();
+            this.log('趋势监测已启动', 'info');
+        } catch (e) {
+            this.log(`趋势监测启动失败: ${e.message}`, 'error');
         }
-        this.log('趋势分析已停止', 'info');
     }
 
     // 检查是否可以开始买入
@@ -1766,52 +1758,62 @@ class BinanceAutoTrader {
         }
     }
 
-    // 分析价格趋势
-    analyzeTrend() {
-        try {
-            // 获取成交记录数据
-            const tradeRecords = this.getTradeRecords();
-            if (tradeRecords.length < 5) {
-                return; // 数据不足，无法分析趋势
-            }
+    renderTrend(state) {
+        if (!this.trendIndicator || !state) return;
+        const { label, score, details } = state;
+        const pct = (x) => (x * 100).toFixed(2) + '%';
+        const info = details
+            ? `VWAP偏离 ${pct(details.vwapDiff)} · 量差 ${(details.imbalance * 100).toFixed(1)}% · n=${details.nTrades}`
+            : '';
 
-            // 提取价格数据
-            const prices = tradeRecords.map(record => record.price);
-            
-            // 计算趋势
-            const trend = this.calculateTrend(prices);
-            this.previousTrend = this.currentTrend;
-            this.currentTrend = trend;
-            
-            // 检测下降信号并记录索引
-            if (trend === 'falling') {
-                this.lastFallingSignalIndex = this.trendData.length;
-                this.canStartBuying = false;
-                this.log(`🚨 检测到下降信号，记录索引: ${this.lastFallingSignalIndex}，开始等待${this.fallingSignalWaitCount}个信号`, 'warning');
-            }
-            
-            // 检查是否可以重新开始买入
-            this.checkBuyingPermission();
-            
-            // 生成趋势数据字符串（模拟您提供的格式）
-            const trendDataString = this.generateTrendDataString(trend, prices[0], tradeRecords.length);
-            
-            // 存储趋势数据
-            this.storeTrendData(trendDataString, trend, prices[0]);
-            
-            // 更新连续信号计数
-            this.updateConsecutiveSignals(trend);
-            
-            // 检查智能交易条件
-            if (this.smartTradingMode) {
-                this.checkSmartTradingConditions();
-            }
-            
-            this.log(`趋势分析: ${trendDataString}`, 'info');
-            
-                } catch (error) {
-            this.log(`趋势分析出错: ${error.message}`, 'error');
+        // Update text
+        if (this.trendTextEl) {
+            this.trendTextEl.textContent = `趋势: ${label} (${(score*100).toFixed(2)}%) ${info ? info : ''}`;
         }
+
+        // Update color frame
+        this.trendIndicator.classList.remove('up', 'down', 'flat');
+        if (label === '上涨') this.trendIndicator.classList.add('up');
+        else if (label === '下降') this.trendIndicator.classList.add('down');
+        else this.trendIndicator.classList.add('flat');
+
+        // Map label to internal code and store as recent signal
+        const map = { '上涨': 'rising', '下降': 'falling', '平缓': 'flat' };
+        const trendCode = map[label] || 'unknown';
+        this.previousTrend = this.currentTrend;
+        this.currentTrend = trendCode;
+        const trendString = `趋势: ${label} (${(score*100).toFixed(2)}%) ${info}`;
+        const currentPrice = details?.lastPrice ?? 0;
+        this.storeTrendData(trendString, trendCode, currentPrice);
+
+        // Update action pill based on last 3 signals
+        const action = this.computeActionFromSignals();
+        this.applyTrendAction(action);
+
+        // When smart mode is on, evaluate auto conditions using latest signals
+        if (this.smartTradingMode) {
+            this.checkSmartTradingConditions();
+        }
+    }
+
+    // Decide UI action pill from the latest 3 signals
+    computeActionFromSignals() {
+        const s = this.getRecentSignals(3);
+        if (s.includes('falling')) return { type: 'stop', text: '停止' };
+        if (s.length === 3 && s[0] === 'rising' && s[1] === 'rising' && s[2] === 'flat') {
+            return { type: 'buy', text: '买入' };
+        }
+        if (s.length === 3 && s[0] === 'flat' && s[1] === 'flat' && s[2] === 'flat') {
+            return { type: 'caution', text: '谨买' };
+        }
+        return { type: 'neutral', text: '--' };
+    }
+
+    applyTrendAction(action) {
+        if (!this.trendActionEl || !action) return;
+        this.trendActionEl.classList.remove('buy', 'stop', 'caution', 'neutral');
+        this.trendActionEl.classList.add(action.type || 'neutral');
+        this.trendActionEl.textContent = action.text || '--';
     }
 
     // 生成趋势数据字符串
