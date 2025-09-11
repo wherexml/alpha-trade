@@ -1916,17 +1916,19 @@ class BinanceAutoTrader {
             return false;
         }
 
-        // 模式1：平缓期买入 [平缓, 平缓, 平缓] 或 [平缓, 平缓, 上涨]
-        if ((recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat') ||
-            (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'rising')) {
-            this.buyAmountRatio = 0.5;
-            return true;
-        }
-
-        // 模式2：上升期买入 [平缓, 上涨, 上涨] 或 [上涨, 上涨, 上涨]
+        // 100%买入条件
+        // [flat/rising, rising, rising] 或 [flat, flat/rising, rising]
         if ((recentSignals[0] === 'flat' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising') ||
             (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising')) {
             this.buyAmountRatio = 1.0;
+            return true;
+        }
+
+        // 50%买入条件
+        // [flat, flat, rising] 或 [flat, flat, flat]
+        if ((recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'rising') ||
+            (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat')) {
+            this.buyAmountRatio = 0.5;
             return true;
         }
 
