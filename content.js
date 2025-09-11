@@ -1962,20 +1962,26 @@ class BinanceAutoTrader {
         }
         
         // 如果未运行，检查开始条件
-        if (!this.isRunning && this.shouldSmartStart()) {
-            this.log('智能交易触发买入', 'info');
-            // 智能交易模式下的买入次数统计
-            this.currentTradeCount++;
-            this.updateTradeCounter();
-            this.startTrading(true); // 传入true表示是智能交易调用
-        } else if (!this.isRunning) {
-            // 记录当前信号状态，帮助调试
+        if (!this.isRunning) {
             const recentSignals = this.getRecentSignals(3);
             if (recentSignals.length >= 3) {
-                if (!this.canStartBuying) {
-                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
-                } else {
-                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
+                this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
+            }
+            
+            if (this.shouldSmartStart()) {
+                this.log('智能交易触发买入', 'info');
+                // 智能交易模式下的买入次数统计
+                this.currentTradeCount++;
+                this.updateTradeCounter();
+                this.startTrading(true); // 传入true表示是智能交易调用
+            } else {
+                // 记录当前信号状态，帮助调试
+                if (recentSignals.length >= 3) {
+                    if (!this.canStartBuying) {
+                        this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
+                    } else {
+                        this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
+                    }
                 }
             }
         }
@@ -1996,12 +2002,9 @@ class BinanceAutoTrader {
             return false;
         }
 
-        this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
-
         // 模式1：平缓期买入 [平缓, 平缓, 平缓] 或 [平缓, 平缓, 上涨]
         if ((recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat') ||
             (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'rising')) {
-            this.log('✅ 检测到买入信号：最近3个信号为[平缓, 平缓, 平缓/上涨] → 买入50%', 'success');
             this.buyAmountRatio = 0.5;
             return true;
         }
@@ -2009,7 +2012,6 @@ class BinanceAutoTrader {
         // 模式2：上升期买入 [平缓, 上涨, 上涨] 或 [上涨, 上涨, 上涨]
         if ((recentSignals[0] === 'flat' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising') ||
             (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising')) {
-            this.log('✅ 检测到买入信号：最近3个信号为[平缓/上涨, 上涨, 上涨] → 买入100%', 'success');
             this.buyAmountRatio = 1.0;
             return true;
         }

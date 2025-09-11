@@ -137,6 +137,13 @@
 
 ## 更新日志
 
+### v1.7.3
+- 修复智能交易两套分析逻辑的问题
+- 统一使用一套趋势分析逻辑，避免重复分析
+- 移除shouldSmartStart方法中的重复日志输出
+- 优化checkSmartTradingConditions方法，统一信号分析流程
+- 确保智能交易只使用一套清晰的分析逻辑
+
 ### v1.7.2
 - 重构clickBuyButton方法，简化按钮查找逻辑
 - 使用精确选择器`button.bn-button.bn-button__buy`定位买入按钮
