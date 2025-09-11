@@ -44,6 +44,9 @@ class BinanceAutoTrader {
         // 智能交易买入比例
         this.buyAmountRatio = 1.0; // 默认买入100%金额
         
+        // 卖出折价率
+        this.sellDiscountRate = 0.02; // 默认2%折价率
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -110,6 +113,10 @@ class BinanceAutoTrader {
                     <label for="config-delay">延迟时间 (ms):</label>
                     <input type="number" id="config-delay" step="10" min="0" value="100">
                 </div>
+                <div class="config-row">
+                    <label for="config-sell-discount">卖出折价率 (%):</label>
+                    <input type="number" id="config-sell-discount" step="0.1" min="0" max="10" value="2">
+                </div>
                 <div class="config-section">
                     <div class="config-section-title">智能交易策略</div>
                     <div class="config-info">
@@ -119,7 +126,7 @@ class BinanceAutoTrader {
                         </div>
                         <div class="config-info-item">
                             <span class="config-info-label">买入条件：</span>
-                            <span class="config-info-text">最近3个信号有2个上升 → 买入100%金额</span>
+                            <span class="config-info-text">最近3个信号：[上升, 上升, 平缓] → 买入100%金额</span>
                         </div>
                         <div class="config-info-item">
                             <span class="config-info-label">停止条件：</span>
@@ -166,9 +173,11 @@ class BinanceAutoTrader {
         const trendEl = document.createElement('div');
         trendEl.id = 'trend-indicator';
         trendEl.className = 'trend-indicator flat';
-        trendEl.textContent = '趋势: 计算中…';
+        trendEl.innerHTML = '<span id="trend-action" class="trend-action neutral">--</span><span id="trend-text">趋势: 计算中…</span>';
         contentEl.insertBefore(trendEl, firstInputRow);
         this.trendIndicator = trendEl;
+        this.trendActionEl = trendEl.querySelector('#trend-action');
+        this.trendTextEl = trendEl.querySelector('#trend-text');
         
         // 设置默认位置为左下角
         this.ui.style.position = 'fixed';
@@ -217,11 +226,55 @@ class BinanceAutoTrader {
         const info = details
             ? `VWAP偏离 ${pct(details.vwapDiff)} · 量差 ${(details.imbalance * 100).toFixed(1)}% · n=${details.nTrades}`
             : '';
-        this.trendIndicator.textContent = `趋势: ${label} (${(score*100).toFixed(2)}%)  ${info}`;
+
+        // Update text
+        if (this.trendTextEl) {
+            this.trendTextEl.textContent = `趋势: ${label} (${(score*100).toFixed(2)}%) ${info ? info : ''}`;
+        }
+
+        // Update color frame
         this.trendIndicator.classList.remove('up', 'down', 'flat');
         if (label === '上涨') this.trendIndicator.classList.add('up');
         else if (label === '下降') this.trendIndicator.classList.add('down');
         else this.trendIndicator.classList.add('flat');
+
+        // Map label to internal code and store as recent signal
+        const map = { '上涨': 'rising', '下降': 'falling', '平缓': 'flat' };
+        const trendCode = map[label] || 'unknown';
+        this.previousTrend = this.currentTrend;
+        this.currentTrend = trendCode;
+        const trendString = `趋势: ${label} (${(score*100).toFixed(2)}%) ${info}`;
+        const currentPrice = details?.lastPrice ?? 0;
+        this.storeTrendData(trendString, trendCode, currentPrice);
+
+        // Update action pill based on last 3 signals
+        const action = this.computeActionFromSignals();
+        this.applyTrendAction(action);
+
+        // When smart mode is on, evaluate auto conditions using latest signals
+        if (this.smartTradingMode) {
+            this.checkSmartTradingConditions();
+        }
+    }
+
+    // Decide UI action pill from the latest 3 signals
+    computeActionFromSignals() {
+        const s = this.getRecentSignals(3);
+        if (s.includes('falling')) return { type: 'stop', text: '停止' };
+        if (s.length === 3 && s[0] === 'rising' && s[1] === 'rising' && s[2] === 'flat') {
+            return { type: 'buy', text: '买入' };
+        }
+        if (s.length === 3 && s[0] === 'flat' && s[1] === 'flat' && s[2] === 'flat') {
+            return { type: 'caution', text: '谨买' };
+        }
+        return { type: 'neutral', text: '--' };
+    }
+
+    applyTrendAction(action) {
+        if (!this.trendActionEl || !action) return;
+        this.trendActionEl.classList.remove('buy', 'stop', 'caution', 'neutral');
+        this.trendActionEl.classList.add(action.type || 'neutral');
+        this.trendActionEl.textContent = action.text || '--';
     }
 
     setupUIEvents() {
@@ -666,11 +719,12 @@ class BinanceAutoTrader {
         
         this.log(`买入价格设置完成: ${buyPriceFormatted}`, 'success');
         
-        // 3. 计算并设置卖出价格（下浮1%）
-        const sellPrice = suggestedPrice * 0.99;
+        // 3. 计算并设置卖出价格（应用折价率）
+        const discountMultiplier = 1 - this.sellDiscountRate;
+        const sellPrice = suggestedPrice * discountMultiplier;
         const sellPriceFormatted = sellPrice.toFixed(8);
         
-        this.log(`计算卖出价格: ${suggestedPrice} * 0.99 = ${sellPriceFormatted}`, 'info');
+        this.log(`计算卖出价格: ${suggestedPrice} * ${discountMultiplier.toFixed(3)} = ${sellPriceFormatted} (折价率: ${(this.sellDiscountRate * 100).toFixed(1)}%)`, 'info');
         
         // 查找卖出价格输入框
         const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
@@ -831,30 +885,56 @@ class BinanceAutoTrader {
         this.log('检查买入确认弹窗...', 'info');
         
         // 等待弹窗出现
-        await this.sleep(200);
+        await this.sleep(300);
         
         // 多次检测弹窗，提高检测成功率
         let confirmButton = null;
         let attempts = 0;
-        const maxAttempts = 5;
+        const maxAttempts = 8; // 增加尝试次数
         
         while (attempts < maxAttempts && !confirmButton) {
+            attempts++;
+            this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
+            await this.sleep(250);
+            
+            // 查找确认弹窗中的"继续"按钮
             confirmButton = this.findBuyConfirmButton();
-            if (!confirmButton) {
-                attempts++;
-                this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
-                await this.sleep(100);
+            
+            // 如果找到按钮，立即跳出循环
+            if (confirmButton) {
+                break;
             }
         }
 
-
-        // 查找确认弹窗中的"继续"按钮
-        confirmButton = this.findBuyConfirmButton();
-        
         if (confirmButton) {
             this.log('发现买入确认弹窗，点击继续', 'info');
-            confirmButton.click();
-            await this.sleep(300);
+            
+            // 确保按钮可见和可点击
+            confirmButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await this.sleep(100);
+            
+            // 尝试多种点击方式
+            try {
+                // 方式1: 直接点击
+                confirmButton.click();
+                this.log('直接点击确认按钮', 'info');
+            } catch (error) {
+                this.log(`直接点击失败: ${error.message}`, 'warning');
+                try {
+                    // 方式2: 触发点击事件
+                    const clickEvent = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    confirmButton.dispatchEvent(clickEvent);
+                    this.log('通过事件触发点击', 'info');
+                } catch (eventError) {
+                    this.log(`事件点击失败: ${eventError.message}`, 'warning');
+                }
+            }
+            
+            await this.sleep(500);
             this.log('确认买入订单', 'success');
         } else {
             this.log('未发现买入确认弹窗，继续执行', 'info');
@@ -862,7 +942,32 @@ class BinanceAutoTrader {
     }
 
     findBuyConfirmButton() {
-        // 方法1: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
+        // 方法1: 查找反向订单确认弹窗（优先级最高）
+        const reverseOrderModal = document.querySelector('[class*="modal"]:not([style*="display: none"])');
+        if (reverseOrderModal) {
+            // 查找弹窗中的确认按钮
+            const confirmButton = reverseOrderModal.querySelector('button[class*="primary"]') ||
+                                reverseOrderModal.querySelector('button[class*="bn-button"]');
+            if (confirmButton && (confirmButton.textContent.includes('确认') || confirmButton.textContent.includes('继续'))) {
+                this.log('找到反向订单确认弹窗按钮', 'info');
+                return confirmButton;
+            }
+        }
+
+        // 方法2: 查找包含"反向订单"文本的弹窗
+        const reverseOrderElements = document.querySelectorAll('*');
+        for (const element of reverseOrderElements) {
+            if (element.textContent.includes('反向订单') && element.textContent.includes('确认')) {
+                const button = element.querySelector('button[class*="primary"]') ||
+                             element.querySelector('button[class*="bn-button"]');
+                if (button && !button.disabled) {
+                    this.log('通过反向订单文本找到确认按钮', 'info');
+                    return button;
+                }
+            }
+        }
+
+        // 方法3: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
         const confirmContainers = document.querySelectorAll('[class*="px-[24px]"][class*="pb-[24px]"]');
         for (const container of confirmContainers) {
             // 检查是否包含买入相关信息
@@ -874,14 +979,14 @@ class BinanceAutoTrader {
             }
         }
 
-        // 方法2: 直接查找"继续"按钮
+        // 方法4: 直接查找"继续"按钮
         let confirmButton = Array.from(document.querySelectorAll('button')).find(btn => 
             btn.textContent.trim() === '继续' && !btn.disabled
         );
 
         if (confirmButton) return confirmButton;
 
-        // 方法3: 查找确认弹窗中的主要按钮
+        // 方法5: 查找确认弹窗中的主要按钮
         confirmButton = document.querySelector('.bn-button__primary[class*="w-full"]') ||
                        document.querySelector('button.bn-button.bn-button__primary[class*="w-full"]');
 
@@ -889,7 +994,7 @@ class BinanceAutoTrader {
             return confirmButton;
         }
 
-        // 方法4: 查找包含订单详情的弹窗
+        // 方法6: 查找包含订单详情的弹窗
         const orderDetailsElements = document.querySelectorAll('[class*="类型"], [class*="数量"], [class*="成交额"]');
         for (const element of orderDetailsElements) {
             const container = element.closest('[class*="px-[24px]"]');
@@ -901,7 +1006,7 @@ class BinanceAutoTrader {
             }
         }
 
-        // 方法5: 模糊匹配 - 查找任何包含确认信息的按钮
+        // 方法7: 模糊匹配 - 查找任何包含确认信息的按钮
         const allButtons = document.querySelectorAll('button');
         for (const button of allButtons) {
             if ((button.textContent.includes('继续') || button.textContent.includes('确认')) && 
@@ -1227,10 +1332,12 @@ class BinanceAutoTrader {
         const configAmount = document.getElementById('config-amount');
         const configCount = document.getElementById('config-count');
         const configDelay = document.getElementById('config-delay');
+        const configSellDiscount = document.getElementById('config-sell-discount');
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
         configDelay.value = this.tradeDelay || 100;
+        configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
     }
 
     // 保存配置
@@ -1238,6 +1345,7 @@ class BinanceAutoTrader {
         const configAmount = parseFloat(document.getElementById('config-amount').value);
         const configCount = parseInt(document.getElementById('config-count').value);
         const configDelay = parseInt(document.getElementById('config-delay').value);
+        const configSellDiscount = parseFloat(document.getElementById('config-sell-discount').value);
         
         if (isNaN(configAmount) || configAmount < 0.1) {
             this.log('交易金额必须大于等于0.1 USDT', 'error');
@@ -1254,10 +1362,16 @@ class BinanceAutoTrader {
             return;
         }
         
+        if (isNaN(configSellDiscount) || configSellDiscount < 0 || configSellDiscount > 10) {
+            this.log('卖出折价率必须在0-10%之间', 'error');
+            return;
+        }
+        
         // 更新配置
         this.currentAmount = configAmount;
         this.maxTradeCount = configCount;
         this.tradeDelay = configDelay;
+        this.sellDiscountRate = configSellDiscount / 100; // 转换为小数
         
         // 更新主界面
         document.getElementById('trade-amount').value = configAmount;
@@ -1268,6 +1382,7 @@ class BinanceAutoTrader {
             amount: configAmount,
             count: configCount,
             delay: configDelay,
+            sellDiscountRate: this.sellDiscountRate,
             smartTradingMode: this.smartTradingMode
         });
         
@@ -1293,6 +1408,7 @@ class BinanceAutoTrader {
                 
                 // 加载智能交易配置
                 this.smartTradingMode = userConfig.smartTradingMode || false;
+                this.sellDiscountRate = userConfig.sellDiscountRate || 0.02;
                 
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
@@ -1311,14 +1427,9 @@ class BinanceAutoTrader {
     toggleSmartTrading() {
         this.smartTradingMode = !this.smartTradingMode;
         this.updateSmartTradingButton();
-        
-        if (this.smartTradingMode) {
-            this.log('智能交易模式已启用', 'info');
-            this.startTrendAnalysis();
-        } else {
-            this.log('智能交易模式已禁用', 'info');
-            this.stopTrendAnalysis();
-        }
+        if (this.smartTradingMode) this.log('智能交易模式已启用', 'info');
+        else this.log('智能交易模式已禁用', 'info');
+        // 依赖 TrendDetector 的实时更新，无需额外定时器
     }
 
     // 更新智能交易按钮状态
@@ -1544,26 +1655,24 @@ class BinanceAutoTrader {
 
     // 判断是否应该智能开始
     shouldSmartStart() {
-        // 检查最近3个信号
+        // 检查最近3个信号（按时间从早到晚）
         const recentSignals = this.getRecentSignals(3);
-        if (recentSignals.length < 3) {
-            return false; // 数据不足
-        }
+        if (recentSignals.length < 3) return false;
 
-        // 最近3个信号都处于平缓期，买入设定金额的1/2
-        if (this.allSignalsAreFlat(recentSignals)) {
-            this.log('最近3个信号都处于平缓期，触发买入（1/2金额）', 'info');
-            this.buyAmountRatio = 0.5; // 买入1/2金额
+        // 模式1：平缓期买入 [平缓, 平缓, 平缓]
+        if (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat') {
+            this.log('最近3个信号为[平缓, 平缓, 平缓] → 买入50%', 'info');
+            this.buyAmountRatio = 0.5;
             return true;
         }
 
-        // 最近3个信号有2个是上升期，买入设定金额的100%
-        if (this.hasTwoRisingSignals(recentSignals)) {
-            this.log('最近3个信号有2个是上升期，触发买入（100%金额）', 'info');
-            this.buyAmountRatio = 1.0; // 买入100%金额
+        // 模式2：上升期买入 [上涨, 上涨, 平缓]
+        if (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'flat') {
+            this.log('最近3个信号为[上涨, 上涨, 平缓] → 买入100%', 'info');
+            this.buyAmountRatio = 1.0;
             return true;
         }
-        
+
         return false;
     }
 
@@ -1580,7 +1689,9 @@ class BinanceAutoTrader {
 
     // 获取最近N个信号
     getRecentSignals(count) {
-        return this.trendData.slice(0, count).map(data => data.trend);
+        // 取“最近”的N个信号：数组末尾是最新，返回按时间从早到晚的顺序
+        const arr = this.trendData.slice(-count);
+        return arr.map(data => data.trend);
     }
 
     // 检查所有信号是否都是平缓期

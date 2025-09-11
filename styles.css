@@ -302,6 +302,42 @@
     color: #bbb;
 }
 
+/* Action pill before the trend text */
+#binance-auto-trader .trend-action {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-right: 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+    border: 1px solid transparent;
+}
+
+#binance-auto-trader .trend-action.buy {
+    color: #0f5132;
+    background: #d1f7e3;
+    border-color: #2ebd85;
+}
+
+#binance-auto-trader .trend-action.stop {
+    color: #58151c;
+    background: #ffd7dc;
+    border-color: #f6465d;
+}
+
+#binance-auto-trader .trend-action.caution {
+    color: #664d03;
+    background: #fff3cd;
+    border-color: #ffc107;
+}
+
+#binance-auto-trader .trend-action.neutral {
+    color: #bbb;
+    background: #2a2a2a;
+    border-color: #555;
+}
+
 #binance-auto-trader.minimized .content {
     display: none;
 }
