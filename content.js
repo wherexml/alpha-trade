@@ -568,8 +568,31 @@ class BinanceAutoTrader {
         
         try {
             await this.runTradingLoop();
+            
+            // 智能交易模式下，单次买入完成后不停止智能交易
+            if (this.isSmartTradingExecution) {
+                this.log('智能交易单次买入完成，继续监控趋势', 'info');
+                this.isRunning = false;
+                this.currentState = 'idle';
+                this.updateUI();
+                return; // 不调用stopTrading()
+            }
         } catch (error) {
             this.log(`交易过程出错: ${error.message}`, 'error');
+            // 智能交易模式下，单次买入完成后不停止智能交易
+            if (this.isSmartTradingExecution) {
+                this.log('智能交易单次买入完成，继续监控趋势', 'info');
+                this.isRunning = false;
+                this.currentState = 'idle';
+                this.updateUI();
+                return; // 不调用stopTrading()
+            } else {
+                this.stopTrading();
+            }
+        }
+        
+        // 普通交易模式下才调用stopTrading
+        if (!this.isSmartTradingExecution) {
             this.stopTrading();
         }
     }
