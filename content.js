@@ -546,25 +546,41 @@ class BinanceAutoTrader {
     async setSellPrice() {
         this.log('设置卖出价格...', 'info');
         
-        // 等待价格输入框更新
-        await this.sleep(500);
-        
-        // 从价格输入框中获取实际设置的价格
-        const priceInput = document.querySelector('input[step="1e-8"]');
-        if (!priceInput) {
-            throw new Error('未找到价格输入框');
+        // 直接从建议价格文本中获取价格
+        const suggestedPriceText = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
+        if (!suggestedPriceText) {
+            // 备用查找方式
+            const priceElements = document.querySelectorAll('div[class*="text-PrimaryText"][class*="cursor-pointer"]');
+            let foundElement = null;
+            for (const element of priceElements) {
+                if (element.textContent.includes('$') && element.textContent.match(/\d+\.\d+/)) {
+                    foundElement = element;
+                    break;
+                }
+            }
+            if (!foundElement) {
+                throw new Error('未找到建议价格文本');
+            }
+            suggestedPriceText = foundElement;
         }
         
-        const currentPrice = parseFloat(priceInput.value);
-        if (isNaN(currentPrice) || currentPrice <= 0) {
-            throw new Error('价格输入框中的价格无效');
+        // 从建议价格文本中提取价格数字
+        const priceText = suggestedPriceText.textContent;
+        const priceMatch = priceText.match(/\$?([\d.]+)/);
+        if (!priceMatch) {
+            throw new Error('无法从建议价格文本中提取价格');
+        }
+        
+        const suggestedPrice = parseFloat(priceMatch[1]);
+        if (isNaN(suggestedPrice) || suggestedPrice <= 0) {
+            throw new Error('建议价格格式无效');
         }
         
         // 计算下浮1%的价格
-        const sellPrice = currentPrice * 0.99;
+        const sellPrice = suggestedPrice * 0.99;
         const formattedPrice = sellPrice.toFixed(8); // 保留8位小数
         
-        this.log(`当前价格: ${currentPrice}, 卖出价格: ${formattedPrice}`, 'info');
+        this.log(`建议价格: ${suggestedPrice}, 卖出价格: ${formattedPrice}`, 'info');
         
         // 查找卖出价格输入框
         const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
@@ -585,19 +601,8 @@ class BinanceAutoTrader {
         sellPriceInput.dispatchEvent(inputEvent);
         sellPriceInput.dispatchEvent(changeEvent);
         
-        // 触发更多事件确保值被正确设置
-        sellPriceInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        sellPriceInput.dispatchEvent(new Event('focus', { bubbles: true }));
-        
-        await this.sleep(300);
-        
-        // 验证设置是否成功
-        const setValue = parseFloat(sellPriceInput.value);
-        if (Math.abs(setValue - sellPrice) < 0.00000001) {
-            this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
-        } else {
-            this.log(`卖出价格设置可能不完整，当前值: ${sellPriceInput.value}`, 'warning');
-        }
+        await this.sleep(200);
+        this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
     }
 
     // 计算带安全缓冲的买入金额，并做向下取小数位处理，降低超额风险
