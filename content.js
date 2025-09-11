@@ -268,12 +268,23 @@ class BinanceAutoTrader {
         const isDeposit = /充值|存款|Deposit/i.test(text) || el.classList.contains('deposit-btn');
         const inHeader = this.isInHeader(el);
 
-        // 必须位于交易面板作用域内（确认弹窗除外）
+        // 必须位于交易面板作用域内（确认弹窗/交易关键按钮除外）
         const formRoot = this.getOrderFormRoot();
-        const inForm = formRoot ? formRoot.contains(el) : true;
+        let inForm = formRoot ? formRoot.contains(el) : true;
         const isConfirm = /(确认|继续)/.test(text);
+        const isTradeAction = el.classList?.contains('bn-button__buy') || /买入|下单/.test(text);
 
-        if (isDeposit || inHeader || !yGuard || (!inForm && !isConfirm)) {
+        // 若是交易关键按钮但未在作用域内，尝试把其上层容器设为新的作用域
+        if (!inForm && isTradeAction) {
+            const panel = el.closest('[role="tabpanel"], form, [class*="panel"], [class*="buySell"], .w-full');
+            if (panel && this.isVisible(panel)) {
+                this.orderRoot = panel;
+                inForm = true;
+                this.log('安全保护: 扩大交易面板作用域以包含目标按钮', 'info');
+            }
+        }
+
+        if (isDeposit || inHeader || !yGuard || (!inForm && !isConfirm && !isTradeAction)) {
             this.log(`安全保护: 跳过点击(${purpose}) → inHeader=${inHeader}, y=${Math.round(r.top)}, inForm=${inForm}, text="${text}"`, 'warning');
             return false;
         }
