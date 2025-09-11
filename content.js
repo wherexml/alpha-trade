@@ -357,11 +357,11 @@ class BinanceAutoTrader {
         });
     }
 
-    async startTrading() {
+    async startTrading(isSmartTrading = false) {
         if (this.isRunning) return;
 
-        // 检查是否在智能交易模式下
-        if (this.smartTradingMode) {
+        // 只有手动点击时才检查智能交易模式
+        if (!isSmartTrading && this.smartTradingMode) {
             this.log('⚠️ 智能交易模式下无法手动买入，请先停止智能交易', 'warning');
             return;
         }
@@ -373,7 +373,7 @@ class BinanceAutoTrader {
         }
 
         // 智能交易模式下的金额调整
-        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+        if (isSmartTrading && this.buyAmountRatio !== 1.0) {
             const originalAmount = amount;
             amount = amount * this.buyAmountRatio;
             this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
@@ -390,8 +390,8 @@ class BinanceAutoTrader {
         this.currentAmount = amount;
         this.maxTradeCount = tradeCount;
         
-        // 如果不是智能交易模式，重置计数；智能交易模式保持已有计数
-        if (!this.smartTradingMode) {
+        // 如果不是智能交易调用，重置计数；智能交易调用保持已有计数
+        if (!isSmartTrading) {
             this.currentTradeCount = 0;
         }
         
@@ -399,7 +399,11 @@ class BinanceAutoTrader {
         this.updateTradeCounter();
         
         // 记录开始交易的详细信息
-        this.log('🚀 开始自动买入', 'success');
+        if (isSmartTrading) {
+            this.log('🚀 智能交易开始买入', 'success');
+        } else {
+            this.log('🚀 开始自动买入', 'success');
+        }
         this.log(`💰 交易金额: ${amount} USDT`, 'info');
         if (tradeCount > 0) {
             this.log(`📊 限制次数: ${tradeCount}`, 'info');
@@ -407,8 +411,8 @@ class BinanceAutoTrader {
             this.log(`📊 无次数限制`, 'info');
         }
         
-        // 如果是智能交易模式，记录买入比例
-        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+        // 如果是智能交易调用，记录买入比例
+        if (isSmartTrading && this.buyAmountRatio !== 1.0) {
             this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
         }
         
@@ -1805,7 +1809,7 @@ class BinanceAutoTrader {
             // 智能交易模式下的买入次数统计
             this.currentTradeCount++;
             this.updateTradeCounter();
-            this.startTrading();
+            this.startTrading(true); // 传入true表示这是智能交易触发的
         } else if (!this.isRunning) {
             // 记录当前信号状态，帮助调试
             const recentSignals = this.getRecentSignals(3);
