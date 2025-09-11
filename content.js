@@ -432,17 +432,120 @@ class BinanceAutoTrader {
         // 1. 确保在买入选项卡
         await this.switchToBuyTab();
         
-        // 2. 设置成交额（带安全缓冲，避免实际撮合金额略高于目标）
+        // 2. 点击建议价格按钮
+        await this.clickSuggestedPrice();
+        
+        // 3. 勾选反向订单
+        await this.checkReverseOrder();
+        
+        // 4. 设置卖出价格（建议价格下浮1%）
+        await this.setSellPrice();
+        
+        // 5. 设置成交额（带安全缓冲，避免实际撮合金额略高于目标）
         const adjustedAmount = this.getAdjustedBuyAmount(this.currentAmount);
         if (adjustedAmount !== this.currentAmount) {
             this.log(`买入金额调整: 目标=${this.currentAmount} USDT -> 调整后=${adjustedAmount} USDT`, 'info');
         }
         await this.setTotalAmount(adjustedAmount);
         
-        // 3. 点击买入按钮
+        // 6. 点击买入按钮
         await this.clickBuyButton();
         
         this.log('买入订单已提交', 'success');
+    }
+
+    // 点击建议价格按钮
+    async clickSuggestedPrice() {
+        this.log('点击建议价格按钮...', 'info');
+        
+        // 查找建议价格按钮
+        const suggestedPriceBtn = document.querySelector('div.border-0.border-b.border-dotted');
+        if (!suggestedPriceBtn) {
+            throw new Error('未找到建议价格按钮');
+        }
+        
+        suggestedPriceBtn.click();
+        await this.sleep(200);
+        this.log('已点击建议价格按钮', 'success');
+    }
+
+    // 勾选反向订单
+    async checkReverseOrder() {
+        this.log('勾选反向订单...', 'info');
+        
+        // 查找反向订单复选框
+        const reverseOrderCheckbox = document.querySelector('div[role="checkbox"][aria-checked="false"]');
+        if (!reverseOrderCheckbox) {
+            // 如果已经勾选了，直接返回
+            const checkedBox = document.querySelector('div[role="checkbox"][aria-checked="true"]');
+            if (checkedBox) {
+                this.log('反向订单已勾选', 'info');
+                return;
+            }
+            throw new Error('未找到反向订单复选框');
+        }
+        
+        reverseOrderCheckbox.click();
+        await this.sleep(200);
+        
+        // 验证是否勾选成功
+        const isChecked = reverseOrderCheckbox.getAttribute('aria-checked') === 'true';
+        if (isChecked) {
+            this.log('反向订单勾选成功', 'success');
+        } else {
+            throw new Error('反向订单勾选失败');
+        }
+    }
+
+    // 设置卖出价格（建议价格下浮1%）
+    async setSellPrice() {
+        this.log('设置卖出价格...', 'info');
+        
+        // 获取建议价格
+        const suggestedPriceText = document.querySelector('div.border-0.border-b.border-dotted');
+        if (!suggestedPriceText) {
+            throw new Error('未找到建议价格文本');
+        }
+        
+        // 从建议价格文本中提取价格数字
+        const priceText = suggestedPriceText.textContent;
+        const priceMatch = priceText.match(/\$?([\d.]+)/);
+        if (!priceMatch) {
+            throw new Error('无法从建议价格文本中提取价格');
+        }
+        
+        const suggestedPrice = parseFloat(priceMatch[1]);
+        if (isNaN(suggestedPrice)) {
+            throw new Error('建议价格格式无效');
+        }
+        
+        // 计算下浮1%的价格
+        const sellPrice = suggestedPrice * 0.99;
+        const formattedPrice = sellPrice.toFixed(8); // 保留8位小数
+        
+        this.log(`建议价格: ${suggestedPrice}, 卖出价格: ${formattedPrice}`, 'info');
+        
+        // 查找卖出价格输入框
+        const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
+        if (!sellPriceInput) {
+            throw new Error('未找到卖出价格输入框');
+        }
+        
+        // 设置卖出价格
+        sellPriceInput.focus();
+        sellPriceInput.select();
+        sellPriceInput.value = '';
+        
+        // 模拟输入
+        const inputEvent = new Event('input', { bubbles: true });
+        const changeEvent = new Event('change', { bubbles: true });
+        
+        sellPriceInput.value = formattedPrice;
+        sellPriceInput.dispatchEvent(inputEvent);
+        sellPriceInput.dispatchEvent(changeEvent);
+        
+        await this.sleep(200);
+        this.log(`卖出价格设置完成: ${formattedPrice}`, 'success');
     }
 
     // 计算带安全缓冲的买入金额，并做向下取小数位处理，降低超额风险
