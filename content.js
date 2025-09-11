@@ -1882,6 +1882,14 @@ class BinanceAutoTrader {
         }
         
         if (this.shouldSmartStart()) {
+            // 检查买入次数限制
+            const maxTradeCount = parseInt(document.getElementById('trade-count').value) || 0;
+            if (maxTradeCount > 0 && this.currentTradeCount >= maxTradeCount) {
+                this.log(`🛑 智能交易达到买入次数限制 (${this.currentTradeCount}/${maxTradeCount})，自动停止`, 'warning');
+                this.stopSmartTrading();
+                return;
+            }
+            
             this.log('智能交易触发买入', 'info');
             // 智能交易模式下的买入次数统计
             this.currentTradeCount++;
@@ -1898,6 +1906,25 @@ class BinanceAutoTrader {
                 }
             }
         }
+    }
+
+    // 停止智能交易
+    stopSmartTrading() {
+        this.log('智能交易模式已禁用', 'info');
+        
+        // 重置智能交易相关状态
+        this.smartTradingMode = false;
+        this.currentTradeCount = 0; // 重置当前次数
+        this.updateTradeCounter(); // 更新显示
+        
+        // 停止趋势分析
+        this.stopTrendAnalysis();
+        
+        // 更新UI
+        this.updateUI();
+        this.updateSmartTradingButton();
+        
+        this.log('智能交易已停止，当前次数已重置，今日统计已保存', 'info');
     }
 
     // 执行智能交易单次买入
@@ -1940,7 +1967,17 @@ class BinanceAutoTrader {
             // 重置智能交易执行标志
             this.isSmartTradingExecution = false;
             
+            // 更新每日统计
+            await this.incrementDailyTradeCount();
+            
             this.log('✅ 智能交易买入完成', 'success');
+            
+            // 智能交易延迟时间检查
+            const tradeDelay = parseInt(document.getElementById('config-delay').value) || 100;
+            if (tradeDelay > 0) {
+                this.log(`⏳ 智能交易延迟 ${tradeDelay}ms，避免频繁交易`, 'info');
+                await this.sleep(tradeDelay);
+            }
             
         } catch (error) {
             this.log(`智能交易买入失败: ${error.message}`, 'error');
