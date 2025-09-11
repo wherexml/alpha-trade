@@ -126,7 +126,7 @@ class BinanceAutoTrader {
                 </div>
                 <div class="config-row">
                     <label for="config-delay">延迟时间 (ms):</label>
-                    <input type="number" id="config-delay" step="10" min="0" value="100">
+                    <input type="number" id="config-delay" step="10" min="0" value="2000">
                 </div>
                 <div class="config-row">
                     <label for="config-sell-discount">卖出折价率 (%):</label>
@@ -1524,8 +1524,64 @@ class BinanceAutoTrader {
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
-        configDelay.value = this.tradeDelay || 100;
+        configDelay.value = this.tradeDelay || 2000;
         configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
+        
+        // 添加实时监听
+        this.addConfigListeners();
+    }
+    
+    // 添加配置面板实时监听
+    addConfigListeners() {
+        const configAmount = document.getElementById('config-amount');
+        const configCount = document.getElementById('config-count');
+        const configDelay = document.getElementById('config-delay');
+        const configSellDiscount = document.getElementById('config-sell-discount');
+        
+        // 监听交易金额变化
+        if (configAmount) {
+            configAmount.addEventListener('input', () => {
+                const value = parseFloat(configAmount.value);
+                if (!isNaN(value) && value >= 0.1) {
+                    this.currentAmount = value;
+                    this.log(`交易金额已更新为: ${value} USDT`, 'info');
+                }
+            });
+        }
+        
+        // 监听交易次数变化
+        if (configCount) {
+            configCount.addEventListener('input', () => {
+                const value = parseInt(configCount.value);
+                if (!isNaN(value) && value >= 0) {
+                    this.maxTradeCount = value;
+                    this.updateTradeCounter(); // 实时更新显示
+                    this.log(`交易次数限制已更新为: ${value}`, 'info');
+                }
+            });
+        }
+        
+        // 监听延迟时间变化
+        if (configDelay) {
+            configDelay.addEventListener('input', () => {
+                const value = parseInt(configDelay.value);
+                if (!isNaN(value) && value >= 0) {
+                    this.tradeDelay = value;
+                    this.log(`延迟时间已更新为: ${value}ms`, 'info');
+                }
+            });
+        }
+        
+        // 监听卖出折价率变化
+        if (configSellDiscount) {
+            configSellDiscount.addEventListener('input', () => {
+                const value = parseFloat(configSellDiscount.value);
+                if (!isNaN(value) && value >= 0 && value <= 10) {
+                    this.sellDiscountRate = value / 100;
+                    this.log(`卖出折价率已更新为: ${value}%`, 'info');
+                }
+            });
+        }
     }
 
     // 保存配置
@@ -1660,8 +1716,8 @@ class BinanceAutoTrader {
             clearInterval(this.trendAnalysisInterval);
         }
         
-        this.trendAnalysisInterval = setInterval(() => {
-            this.analyzeTrend();
+        this.trendAnalysisInterval = setInterval(async () => {
+            await this.analyzeTrend();
         }, 2000); // 每2秒分析一次趋势
         
         this.log('趋势分析已启动', 'info');
@@ -1693,7 +1749,7 @@ class BinanceAutoTrader {
     }
 
     // 分析价格趋势
-    analyzeTrend() {
+    async analyzeTrend() {
         try {
             // 获取成交记录数据
             const tradeRecords = this.getTradeRecords();
@@ -1734,6 +1790,14 @@ class BinanceAutoTrader {
             }
             
             this.log(`趋势分析: ${trendDataString}`, 'info');
+            
+            // 智能交易模式下，在趋势分析之间添加延迟
+            if (this.smartTradingMode) {
+                const trendDelay = parseInt(document.getElementById('config-delay').value) || 2000;
+                if (trendDelay > 0) {
+                    await this.sleep(trendDelay);
+                }
+            }
             
                 } catch (error) {
             this.log(`趋势分析出错: ${error.message}`, 'error');
@@ -1973,7 +2037,7 @@ class BinanceAutoTrader {
             this.log('✅ 智能交易买入完成', 'success');
             
             // 智能交易延迟时间检查
-            const tradeDelay = parseInt(document.getElementById('config-delay').value) || 100;
+            const tradeDelay = parseInt(document.getElementById('config-delay').value) || 2000;
             if (tradeDelay > 0) {
                 this.log(`⏳ 智能交易延迟 ${tradeDelay}ms，避免频繁交易`, 'info');
                 await this.sleep(tradeDelay);
