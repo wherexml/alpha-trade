@@ -568,31 +568,8 @@ class BinanceAutoTrader {
         
         try {
             await this.runTradingLoop();
-            
-            // 智能交易模式下，单次买入完成后不停止智能交易
-            if (this.isSmartTradingExecution) {
-                this.log('智能交易单次买入完成，继续监控趋势', 'info');
-                this.isRunning = false;
-                this.currentState = 'idle';
-                this.updateUI();
-                return; // 不调用stopTrading()
-            }
         } catch (error) {
             this.log(`交易过程出错: ${error.message}`, 'error');
-            // 智能交易模式下，单次买入完成后不停止智能交易
-            if (this.isSmartTradingExecution) {
-                this.log('智能交易单次买入完成，继续监控趋势', 'info');
-                this.isRunning = false;
-                this.currentState = 'idle';
-                this.updateUI();
-                return; // 不调用stopTrading()
-            } else {
-                this.stopTrading();
-            }
-        }
-        
-        // 普通交易模式下才调用stopTrading
-        if (!this.isSmartTradingExecution) {
             this.stopTrading();
         }
     }
@@ -1225,25 +1202,10 @@ class BinanceAutoTrader {
     async clickBuyButton() {
         let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
         if (!buyButton) {
-            // 使用安全查找方法，优先在订单面板内查找
-            buyButton = this.safeFindElement([
-                'button.bn-button__buy',
-                'button[class*="bn-button__buy"]',
-                'button[class*="buy"]',
-                'button:has-text("买入 ZENT")',
-                'button:has-text("买入")',
-                'button:has-text("Buy")'
-            ], '买入按钮');
-            
-            // 如果安全查找失败，使用全局查找作为备用
-            if (!buyButton) {
-                this.log('在订单面板内未找到买入按钮，尝试全局查找...', 'warning');
-                buyButton = document.querySelector('button[class*="buy"]') ||
-                           Array.from(document.querySelectorAll('button')).find(btn => 
-                               btn.textContent.includes('买入') && !btn.disabled
-                           );
-            }
-            
+            buyButton = document.querySelector('button[class*="buy"]') ||
+                       Array.from(document.querySelectorAll('button')).find(btn => 
+                           btn.textContent.includes('买入') && !btn.disabled
+                       );
             this.cachedElements.buyButton = buyButton;
         }
 
@@ -1251,28 +1213,12 @@ class BinanceAutoTrader {
             throw new Error('未找到买入按钮');
         }
 
-        // 额外验证：确保不是充值按钮
-        const text = buyButton.textContent || '';
-        const classes = buyButton.classList || [];
-        
-        if (/充值|Deposit/i.test(text) || classes.contains('deposit-btn')) {
-            throw new Error('检测到充值按钮，跳过点击');
-        }
-
         if (buyButton.disabled) {
             throw new Error('买入按钮不可用');
         }
 
-        // 使用安全点击
-        if (!this.safeClick(buyButton, '点击买入按钮')) {
-            this.log('首次点击买入按钮被保护，尝试滚动后重试', 'warning');
-            try { buyButton.scrollIntoView({ block: 'center' }); } catch(_) {}
-            if (!this.safeClick(buyButton, '点击买入按钮(二次)')) {
-                throw new Error('安全保护阻止点击买入按钮');
-            }
-        }
-        
-        await this.sleep(300); // 减少到300ms
+        buyButton.click();
+        await this.sleep(300);
         this.log('点击买入按钮', 'success');
 
         // 检查并处理确认弹窗
@@ -1460,7 +1406,7 @@ class BinanceAutoTrader {
         
         if (currentOrderTab && !currentOrderTab.classList.contains('active')) {
             if (this.safeClick(currentOrderTab, '切换到当前委托选项卡')) {
-                this.log('切换到当前委托选项卡', 'info');
+            this.log('切换到当前委托选项卡', 'info');
                 await this.sleep(200);
             } else {
                 this.log('安全保护阻止点击当前委托选项卡', 'warning');
@@ -1479,7 +1425,7 @@ class BinanceAutoTrader {
         
         if (limitTab && !limitTab.classList.contains('active')) {
             if (this.safeClick(limitTab, '切换到限价委托选项卡')) {
-                this.log('切换到限价委托选项卡', 'info');
+            this.log('切换到限价委托选项卡', 'info');
                 await this.sleep(200);
             } else {
                 this.log('安全保护阻止点击限价委托选项卡', 'warning');
