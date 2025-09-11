@@ -47,6 +47,11 @@ class BinanceAutoTrader {
         // 卖出折价率
         this.sellDiscountRate = 0.02; // 默认2%折价率
         
+        // 下降信号等待机制
+        this.lastFallingSignalIndex = -1; // 最后一次下降信号在trendData中的索引
+        this.fallingSignalWaitCount = 10; // 下降信号后需要等待的信号数量
+        this.canStartBuying = true; // 是否可以开始买入
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -131,6 +136,10 @@ class BinanceAutoTrader {
                         <div class="config-info-item">
                             <span class="config-info-label">停止条件：</span>
                             <span class="config-info-text">出现下降信号 → 立即停止</span>
+                        </div>
+                        <div class="config-info-item">
+                            <span class="config-info-label">等待机制：</span>
+                            <span class="config-info-text">下降信号后需等待10个信号才能重新买入</span>
                         </div>
                     </div>
                 </div>
@@ -1560,6 +1569,22 @@ class BinanceAutoTrader {
         this.log('趋势分析已停止', 'info');
     }
 
+    // 检查是否可以开始买入
+    checkBuyingPermission() {
+        if (this.lastFallingSignalIndex >= 0) {
+            const signalsSinceFalling = this.trendData.length - this.lastFallingSignalIndex;
+            if (signalsSinceFalling >= this.fallingSignalWaitCount) {
+                if (!this.canStartBuying) {
+                    this.canStartBuying = true;
+                    this.log(`✅ 已等待${this.fallingSignalWaitCount}个信号，可以重新开始买入`, 'success');
+                }
+            } else {
+                const remaining = this.fallingSignalWaitCount - signalsSinceFalling;
+                this.log(`⏳ 下降信号后等待中: ${signalsSinceFalling}/${this.fallingSignalWaitCount} (还需${remaining}个信号)`, 'info');
+            }
+        }
+    }
+
     // 分析价格趋势
     analyzeTrend() {
         try {
@@ -1576,6 +1601,16 @@ class BinanceAutoTrader {
             const trend = this.calculateTrend(prices);
             this.previousTrend = this.currentTrend;
             this.currentTrend = trend;
+            
+            // 检测下降信号并记录索引
+            if (trend === 'falling') {
+                this.lastFallingSignalIndex = this.trendData.length;
+                this.canStartBuying = false;
+                this.log(`🚨 检测到下降信号，记录索引: ${this.lastFallingSignalIndex}，开始等待${this.fallingSignalWaitCount}个信号`, 'warning');
+            }
+            
+            // 检查是否可以重新开始买入
+            this.checkBuyingPermission();
             
             // 生成趋势数据字符串（模拟您提供的格式）
             const trendDataString = this.generateTrendDataString(trend, prices[0], tradeRecords.length);
@@ -1748,13 +1783,23 @@ class BinanceAutoTrader {
             // 记录当前信号状态，帮助调试
             const recentSignals = this.getRecentSignals(3);
             if (recentSignals.length >= 3) {
-                this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
+                if (!this.canStartBuying) {
+                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
+                } else {
+                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
+                }
             }
         }
     }
 
     // 判断是否应该智能开始
     shouldSmartStart() {
+        // 首先检查是否允许买入（下降信号等待机制）
+        if (!this.canStartBuying) {
+            this.log(`🚫 下降信号后等待中，暂不允许买入`, 'info');
+            return false;
+        }
+
         // 检查最近3个信号（按时间从早到晚）
         const recentSignals = this.getRecentSignals(3);
         if (recentSignals.length < 3) {
