@@ -16,6 +16,10 @@ class BinanceAutoTrader {
         this.maxTradeCount = 0; // 最大交易次数，0表示无限制
         this.currentTradeCount = 0; // 当前交易次数
         
+        // 每日统计
+        this.dailyTradeCount = 0; // 今日交易次数
+        this.lastTradeDate = null; // 上次交易日期
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -68,14 +72,15 @@ class BinanceAutoTrader {
             <div class="content">
                 <div class="input-row">
                     <label for="trade-amount">交易金额 (USDT):</label>
-                    <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1">
+                    <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1" value="250">
                 </div>
                 <div class="input-row">
                     <label for="trade-count">买入次数限制:</label>
-                    <input type="number" id="trade-count" placeholder="输入次数(0=无限制)" step="1" min="0" value="0">
+                    <input type="number" id="trade-count" placeholder="输入次数(0=无限制)" step="1" min="0" value="40">
                 </div>
                 <div class="status-display" id="status-display">等待开始</div>
-                <div class="trade-counter" id="trade-counter">买入次数: 0/0</div>
+                <div class="trade-counter" id="trade-counter">买入次数: 0/40</div>
+                <div class="daily-stats" id="daily-stats">今日交易: 0次</div>
                 <div class="control-buttons">
                     <button class="control-btn start-btn" id="start-btn">开始买入</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止买入</button>
@@ -91,12 +96,21 @@ class BinanceAutoTrader {
         `;
 
         document.body.appendChild(this.ui);
+        
+        // 设置默认位置为左下角
+        this.ui.style.position = 'fixed';
+        this.ui.style.left = '20px';
+        this.ui.style.bottom = '20px';
+        this.ui.style.zIndex = '9999';
+        
         this.logContainer = document.getElementById('log-container');
         this.statusDisplay = document.getElementById('status-display');
         this.tradeCounter = document.getElementById('trade-counter');
+        this.dailyStats = document.getElementById('daily-stats');
 
         this.setupUIEvents();
         this.makeDraggable();
+        this.loadDailyStats();
     }
 
     setupUIEvents() {
@@ -355,6 +369,9 @@ class BinanceAutoTrader {
                 consecutiveErrors = 0; // 重置错误计数
                 this.currentTradeCount++; // 增加交易次数
                 this.updateTradeCounter(); // 更新交易次数显示
+                
+                // 更新每日统计
+                await this.incrementDailyTradeCount();
                 
                 const tradeDuration = Date.now() - this.tradeStartTime;
                 this.log(`第 ${this.currentTradeCount} 轮买入完成 (耗时: ${tradeDuration}ms)`, 'success');
@@ -969,6 +986,97 @@ class BinanceAutoTrader {
 
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // 获取UTC+0的当前日期字符串
+    getUTCDateString() {
+        const now = new Date();
+        // 直接使用UTC时间，不需要时区转换
+        const year = now.getUTCFullYear();
+        const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(now.getUTCDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`; // 格式: YYYY-MM-DD
+    }
+
+    // 加载每日统计数据
+    async loadDailyStats() {
+        try {
+            const today = this.getUTCDateString();
+            const storedData = await this.getStorageData('dailyStats');
+            
+            if (storedData && storedData.date === today) {
+                this.dailyTradeCount = storedData.count || 0;
+                this.lastTradeDate = storedData.date;
+            } else {
+                // 新的一天，重置计数
+                this.dailyTradeCount = 0;
+                this.lastTradeDate = today;
+                await this.saveDailyStats();
+            }
+            
+            this.updateDailyStatsDisplay();
+            this.log(`今日交易次数: ${this.dailyTradeCount}`, 'info');
+        } catch (error) {
+            this.log(`加载每日统计失败: ${error.message}`, 'error');
+            this.dailyTradeCount = 0;
+            this.updateDailyStatsDisplay();
+        }
+    }
+
+    // 保存每日统计数据
+    async saveDailyStats() {
+        try {
+            const today = this.getUTCDateString();
+            const data = {
+                date: today,
+                count: this.dailyTradeCount
+            };
+            await this.setStorageData('dailyStats', data);
+        } catch (error) {
+            this.log(`保存每日统计失败: ${error.message}`, 'error');
+        }
+    }
+
+    // 增加今日交易次数
+    async incrementDailyTradeCount() {
+        const today = this.getUTCDateString();
+        
+        // 检查是否是新的一天
+        if (this.lastTradeDate !== today) {
+            this.dailyTradeCount = 0;
+            this.lastTradeDate = today;
+        }
+        
+        this.dailyTradeCount++;
+        await this.saveDailyStats();
+        this.updateDailyStatsDisplay();
+        
+        this.log(`今日交易次数更新: ${this.dailyTradeCount}`, 'info');
+    }
+
+    // 更新每日统计显示
+    updateDailyStatsDisplay() {
+        if (this.dailyStats) {
+            this.dailyStats.textContent = `今日交易: ${this.dailyTradeCount}次`;
+        }
+    }
+
+    // 获取本地存储数据
+    async getStorageData(key) {
+        return new Promise((resolve) => {
+            chrome.storage.local.get([key], (result) => {
+                resolve(result[key] || null);
+            });
+        });
+    }
+
+    // 设置本地存储数据
+    async setStorageData(key, value) {
+        return new Promise((resolve) => {
+            chrome.storage.local.set({ [key]: value }, () => {
+                resolve();
+            });
+        });
     }
 }
 
