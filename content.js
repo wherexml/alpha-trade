@@ -55,6 +55,9 @@ class BinanceAutoTrader {
         this.fallingSignalWaitCount = 10; // 下降信号后需要等待的信号数量
         this.canStartBuying = true; // 是否可以开始买入
         
+        // 强制停止标志
+        this.forceStop = false; // 强制停止所有交易
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -568,6 +571,7 @@ class BinanceAutoTrader {
         
         this.isRunning = false;
         this.currentState = 'idle';
+        this.forceStop = false; // 重置强制停止标志
         
         if (this.orderCheckInterval) {
             clearInterval(this.orderCheckInterval);
@@ -628,11 +632,11 @@ class BinanceAutoTrader {
                 this.statusDisplay.textContent = '智能交易运行中';
                 this.statusDisplay.className = 'status-display smart-trading';
             } else {
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'block';
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
                 stopBtn.textContent = '立即停止';
                 this.statusDisplay.textContent = '买入运行中';
-                this.statusDisplay.className = 'status-display running';
+            this.statusDisplay.className = 'status-display running';
             }
         } else {
             startBtn.style.display = 'block';
@@ -649,8 +653,8 @@ class BinanceAutoTrader {
                 startBtn.disabled = false;
                 startBtn.textContent = '自动买入';
                 startBtn.title = '';
-                this.statusDisplay.textContent = '等待开始';
-                this.statusDisplay.className = 'status-display';
+            this.statusDisplay.textContent = '等待开始';
+            this.statusDisplay.className = 'status-display';
             }
         }
     }
@@ -680,6 +684,12 @@ class BinanceAutoTrader {
         
         while (this.isRunning) {
             try {
+                // 检查强制停止标志
+                if (this.forceStop) {
+                    this.log('检测到强制停止标志，立即停止交易循环', 'warning');
+                    break;
+                }
+                
                 // 每次循环前检查页面状态
                 if (!this.performRuntimeChecks()) {
                     await this.sleep(5000); // 等待5秒后重试
@@ -838,6 +848,12 @@ class BinanceAutoTrader {
     }
 
     async executeBuy() {
+        // 检查强制停止标志
+        if (this.forceStop) {
+            this.log('检测到强制停止标志，跳过买入操作', 'warning');
+            return;
+        }
+        
         this.tradeStartTime = Date.now(); // 记录交易开始时间
         this.currentState = 'buying';
         this.log('🔄 开始执行买入操作', 'info');
@@ -1167,7 +1183,7 @@ class BinanceAutoTrader {
                 this.log('在交易面板根节点内未找到买入按钮，尝试全局查找...', 'info');
                 buyButton = document.querySelector('button.bn-button__buy') ||
                            document.querySelector('button[class*="bn-button__buy"]') ||
-                           Array.from(document.querySelectorAll('button')).find(btn => 
+                       Array.from(document.querySelectorAll('button')).find(btn => 
                                btn.textContent.includes('买入') && 
                                !btn.textContent.includes('充值') && 
                                !btn.textContent.includes('卖出') &&
@@ -1744,6 +1760,9 @@ class BinanceAutoTrader {
             // 停止智能交易模式
             this.smartTradingMode = false;
             this.log('智能交易模式已禁用', 'info');
+            
+            // 设置强制停止标志
+            this.forceStop = true;
             
             // 如果正在运行交易，立即停止
             if (this.isRunning) {
