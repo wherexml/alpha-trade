@@ -1200,19 +1200,34 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
-        // 使用安全查找方法，优先在订单面板内查找
-        const buyButton = this.safeFindElement([
-            'button.bn-button__buy',
-            'button[class*="bn-button__buy"]',
-            'button:has-text("买入 ZENT")',
-            'button:has-text("买入")',
-            'button:has-text("Buy")'
-        ], '买入按钮');
-        
+        let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
+        if (!buyButton) {
+            // 使用安全查找方法，优先在订单面板内查找
+            buyButton = this.safeFindElement([
+                'button.bn-button__buy',
+                'button[class*="bn-button__buy"]',
+                'button[class*="buy"]',
+                'button:has-text("买入 ZENT")',
+                'button:has-text("买入")',
+                'button:has-text("Buy")'
+            ], '买入按钮');
+            
+            // 如果安全查找失败，使用全局查找作为备用
+            if (!buyButton) {
+                this.log('在订单面板内未找到买入按钮，尝试全局查找...', 'warning');
+                buyButton = document.querySelector('button[class*="buy"]') ||
+                           Array.from(document.querySelectorAll('button')).find(btn => 
+                               btn.textContent.includes('买入') && !btn.disabled
+                           );
+            }
+            
+            this.cachedElements.buyButton = buyButton;
+        }
+
         if (!buyButton) {
             throw new Error('未找到买入按钮');
         }
-        
+
         // 额外验证：确保不是充值按钮
         const text = buyButton.textContent || '';
         const classes = buyButton.classList || [];
@@ -1220,15 +1235,12 @@ class BinanceAutoTrader {
         if (/充值|Deposit/i.test(text) || classes.contains('deposit-btn')) {
             throw new Error('检测到充值按钮，跳过点击');
         }
-        
-        // 验证按钮状态
-        if (buyButton.disabled) {
-            throw new Error('买入按钮已禁用');
-        }
-        
-        // 缓存按钮元素
-        this.cachedElements.buyButton = buyButton;
 
+        if (buyButton.disabled) {
+            throw new Error('买入按钮不可用');
+        }
+
+        // 使用安全点击
         if (!this.safeClick(buyButton, '点击买入按钮')) {
             this.log('首次点击买入按钮被保护，尝试滚动后重试', 'warning');
             try { buyButton.scrollIntoView({ block: 'center' }); } catch(_) {}
@@ -1236,7 +1248,8 @@ class BinanceAutoTrader {
                 throw new Error('安全保护阻止点击买入按钮');
             }
         }
-        await this.sleep(300);
+        
+        await this.sleep(300); // 减少到300ms
         this.log('点击买入按钮', 'success');
 
         // 检查并处理确认弹窗
@@ -1247,56 +1260,29 @@ class BinanceAutoTrader {
         this.log('检查买入确认弹窗...', 'info');
         
         // 等待弹窗出现
-        await this.sleep(300);
+        await this.sleep(200);
         
         // 多次检测弹窗，提高检测成功率
         let confirmButton = null;
         let attempts = 0;
-        const maxAttempts = 8; // 增加尝试次数
+        const maxAttempts = 5;
         
         while (attempts < maxAttempts && !confirmButton) {
+            confirmButton = this.findBuyConfirmButton();
+            if (!confirmButton) {
                 attempts++;
                 this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
-            await this.sleep(250);
+                await this.sleep(100);
+            }
+        }
 
         // 查找确认弹窗中的"继续"按钮
         confirmButton = this.findBuyConfirmButton();
-            
-            // 如果找到按钮，立即跳出循环
-            if (confirmButton) {
-                break;
-            }
-        }
         
         if (confirmButton) {
             this.log('发现买入确认弹窗，点击继续', 'info');
-            
-            // 确保按钮可见和可点击
-            confirmButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await this.sleep(100);
-            
-            // 尝试多种点击方式
-            try {
-                // 方式1: 直接点击
             confirmButton.click();
-                this.log('直接点击确认按钮', 'info');
-            } catch (error) {
-                this.log(`直接点击失败: ${error.message}`, 'warning');
-                try {
-                    // 方式2: 触发点击事件
-                    const clickEvent = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    confirmButton.dispatchEvent(clickEvent);
-                    this.log('通过事件触发点击', 'info');
-                } catch (eventError) {
-                    this.log(`事件点击失败: ${eventError.message}`, 'warning');
-                }
-            }
-            
-            await this.sleep(500);
+            await this.sleep(300);
             this.log('确认买入订单', 'success');
         } else {
             this.log('未发现买入确认弹窗，继续执行', 'info');
@@ -1304,32 +1290,7 @@ class BinanceAutoTrader {
     }
 
     findBuyConfirmButton() {
-        // 方法1: 查找反向订单确认弹窗（优先级最高）
-        const reverseOrderModal = document.querySelector('[class*="modal"]:not([style*="display: none"])');
-        if (reverseOrderModal) {
-            // 查找弹窗中的确认按钮
-            const confirmButton = reverseOrderModal.querySelector('button[class*="primary"]') ||
-                                reverseOrderModal.querySelector('button[class*="bn-button"]');
-            if (confirmButton && (confirmButton.textContent.includes('确认') || confirmButton.textContent.includes('继续'))) {
-                this.log('找到反向订单确认弹窗按钮', 'info');
-                return confirmButton;
-            }
-        }
-
-        // 方法2: 查找包含"反向订单"文本的弹窗
-        const reverseOrderElements = document.querySelectorAll('*');
-        for (const element of reverseOrderElements) {
-            if (element.textContent.includes('反向订单') && element.textContent.includes('确认')) {
-                const button = element.querySelector('button[class*="primary"]') ||
-                             element.querySelector('button[class*="bn-button"]');
-                if (button && !button.disabled) {
-                    this.log('通过反向订单文本找到确认按钮', 'info');
-                    return button;
-                }
-            }
-        }
-
-        // 方法3: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
+        // 方法1: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
         const confirmContainers = document.querySelectorAll('[class*="px-[24px]"][class*="pb-[24px]"]');
         for (const container of confirmContainers) {
             // 检查是否包含买入相关信息
@@ -1341,14 +1302,14 @@ class BinanceAutoTrader {
             }
         }
 
-        // 方法4: 直接查找"继续"按钮
+        // 方法2: 直接查找"继续"按钮
         let confirmButton = Array.from(document.querySelectorAll('button')).find(btn => 
             btn.textContent.trim() === '继续' && !btn.disabled
         );
 
         if (confirmButton) return confirmButton;
 
-        // 方法5: 查找确认弹窗中的主要按钮
+        // 方法3: 查找确认弹窗中的主要按钮
         confirmButton = document.querySelector('.bn-button__primary[class*="w-full"]') ||
                        document.querySelector('button.bn-button.bn-button__primary[class*="w-full"]');
 
@@ -1356,7 +1317,7 @@ class BinanceAutoTrader {
             return confirmButton;
         }
 
-        // 方法6: 查找包含订单详情的弹窗
+        // 方法4: 查找包含订单详情的弹窗
         const orderDetailsElements = document.querySelectorAll('[class*="类型"], [class*="数量"], [class*="成交额"]');
         for (const element of orderDetailsElements) {
             const container = element.closest('[class*="px-[24px]"]');
@@ -1365,6 +1326,16 @@ class BinanceAutoTrader {
                 if (button && !button.disabled) {
                     return button;
                 }
+            }
+        }
+
+        // 方法5: 模糊匹配 - 查找任何包含确认信息的按钮
+        const allButtons = document.querySelectorAll('button');
+        for (const button of allButtons) {
+            if ((button.textContent.includes('继续') || button.textContent.includes('确认')) && 
+                !button.disabled && 
+                button.offsetParent !== null) { // 确保按钮可见
+                return button;
             }
         }
 
