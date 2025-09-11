@@ -279,7 +279,6 @@ class BinanceAutoTrader {
         let inForm = formRoot ? formRoot.contains(el) : true;
         const isConfirm = /(确认|继续)/.test(text);
         const isTradeAction = el.classList?.contains('bn-button__buy') || /买入|下单/.test(text);
-        const isReverseOrder = el.getAttribute('role') === 'checkbox' && /反向订单/.test(text);
 
         // 若是交易关键按钮但未在作用域内，尝试把其上层容器设为新的作用域
         if (!inForm && isTradeAction) {
@@ -291,7 +290,7 @@ class BinanceAutoTrader {
             }
         }
 
-        if (isDeposit || inHeader || !yGuard || (!inForm && !isConfirm && !isTradeAction && !isReverseOrder)) {
+        if (isDeposit || inHeader || !yGuard || (!inForm && !isConfirm && !isTradeAction)) {
             this.log(`安全保护: 跳过点击(${purpose}) → inHeader=${inHeader}, y=${Math.round(r.top)}, inForm=${inForm}, text="${text}"`, 'warning');
             return false;
         }
@@ -1123,10 +1122,8 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
-        // 1. 使用缓存机制查找按钮
         let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
         if (!buyButton) {
-            // 2. 简化的查找逻辑
             buyButton = document.querySelector('button[class*="buy"]') ||
                        Array.from(document.querySelectorAll('button')).find(btn => 
                            btn.textContent.includes('买入') && !btn.disabled
@@ -1134,23 +1131,19 @@ class BinanceAutoTrader {
             this.cachedElements.buyButton = buyButton;
         }
 
-        // 3. 简化的验证逻辑
         if (!buyButton) {
             throw new Error('未找到买入按钮');
         }
+
         if (buyButton.disabled) {
             throw new Error('买入按钮不可用');
         }
-        if (buyButton.textContent.includes('充值') || buyButton.classList.contains('deposit-btn')) {
-            throw new Error('检测到充值按钮，跳过点击');
-        }
 
-        // 4. 直接点击，简化安全验证
         buyButton.click();
         await this.sleep(300);
         this.log('点击买入按钮', 'success');
 
-        // 5. 保持确认弹窗处理
+        // 检查并处理确认弹窗
         await this.handleBuyConfirmationDialog();
     }
 
