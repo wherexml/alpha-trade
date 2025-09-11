@@ -161,7 +161,7 @@ class BinanceAutoTrader {
                 <div class="trade-counter" id="trade-counter">买入次数: 0/40</div>
                 <div class="daily-stats" id="daily-stats">今日交易: 0次</div>
                 <div class="control-buttons">
-                    <button class="control-btn start-btn" id="start-btn">开始买入</button>
+                    <button class="control-btn start-btn" id="start-btn">自动买入</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">立即停止</button>
                 </div>
                 <div class="smart-trading-control">
@@ -360,6 +360,12 @@ class BinanceAutoTrader {
     async startTrading() {
         if (this.isRunning) return;
 
+        // 检查是否在智能交易模式下
+        if (this.smartTradingMode) {
+            this.log('⚠️ 智能交易模式下无法手动买入，请先停止智能交易', 'warning');
+            return;
+        }
+
         let amount = parseFloat(document.getElementById('trade-amount').value);
         if (!amount || amount < 0.1) {
             this.log('请输入有效金额（≥0.1 USDT）', 'error');
@@ -383,7 +389,12 @@ class BinanceAutoTrader {
         this.isRunning = true;
         this.currentAmount = amount;
         this.maxTradeCount = tradeCount;
-        this.currentTradeCount = 0;
+        
+        // 如果不是智能交易模式，重置计数；智能交易模式保持已有计数
+        if (!this.smartTradingMode) {
+            this.currentTradeCount = 0;
+        }
+        
         this.updateUI();
         this.updateTradeCounter();
         
@@ -505,8 +516,21 @@ class BinanceAutoTrader {
         } else {
             startBtn.style.display = 'block';
             stopBtn.style.display = 'none';
-            this.statusDisplay.textContent = '等待开始';
-            this.statusDisplay.className = 'status-display';
+            
+            // 智能交易模式下的按钮状态控制
+            if (this.smartTradingMode) {
+                startBtn.disabled = true;
+                startBtn.textContent = '智能交易中';
+                startBtn.title = '智能交易模式下无法手动买入，请先停止智能交易';
+                this.statusDisplay.textContent = '智能交易模式';
+                this.statusDisplay.className = 'status-display smart-trading';
+            } else {
+                startBtn.disabled = false;
+                startBtn.textContent = '自动买入';
+                startBtn.title = '';
+                this.statusDisplay.textContent = '等待开始';
+                this.statusDisplay.className = 'status-display';
+            }
         }
     }
 
@@ -1778,6 +1802,9 @@ class BinanceAutoTrader {
         // 如果未运行，检查开始条件
         if (!this.isRunning && this.shouldSmartStart()) {
             this.log('智能交易触发买入', 'info');
+            // 智能交易模式下的买入次数统计
+            this.currentTradeCount++;
+            this.updateTradeCounter();
             this.startTrading();
         } else if (!this.isRunning) {
             // 记录当前信号状态，帮助调试
