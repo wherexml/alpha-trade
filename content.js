@@ -1875,27 +1875,25 @@ class BinanceAutoTrader {
 
     // 检查智能交易条件
     checkSmartTradingConditions() {
-        // 只检查买入条件，不检查停止条件
-        if (!this.isRunning) {
-            const recentSignals = this.getRecentSignals(3);
+        // 智能交易模式下，无论是否在运行都要检查买入条件
+        const recentSignals = this.getRecentSignals(3);
+        if (recentSignals.length >= 3) {
+            this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
+        }
+        
+        if (this.shouldSmartStart()) {
+            this.log('智能交易触发买入', 'info');
+            // 智能交易模式下的买入次数统计
+            this.currentTradeCount++;
+            this.updateTradeCounter();
+            this.startTrading(true); // 传入true表示是智能交易调用
+        } else {
+            // 记录当前信号状态，帮助调试
             if (recentSignals.length >= 3) {
-                this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
-            }
-            
-            if (this.shouldSmartStart()) {
-                this.log('智能交易触发买入', 'info');
-                // 智能交易模式下的买入次数统计
-                this.currentTradeCount++;
-                this.updateTradeCounter();
-                this.startTrading(true); // 传入true表示是智能交易调用
-            } else {
-                // 记录当前信号状态，帮助调试
-                if (recentSignals.length >= 3) {
-                    if (!this.canStartBuying) {
-                        this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
-                    } else {
-                        this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
-                    }
+                if (!this.canStartBuying) {
+                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
+                } else {
+                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
                 }
             }
         }
@@ -1913,6 +1911,11 @@ class BinanceAutoTrader {
         const recentSignals = this.getRecentSignals(3);
         if (recentSignals.length < 3) {
             this.log(`信号数据不足，当前只有 ${recentSignals.length} 个信号，需要3个`, 'info');
+            return false;
+        }
+
+        // 如果智能交易已经在运行，不重复启动
+        if (this.isRunning) {
             return false;
         }
 
