@@ -501,29 +501,25 @@ class BinanceAutoTrader {
     async setSellPrice() {
         this.log('设置卖出价格...', 'info');
         
-        // 获取建议价格
-        const suggestedPriceText = document.querySelector('div.border-0.border-b.border-dotted');
-        if (!suggestedPriceText) {
-            throw new Error('未找到建议价格文本');
+        // 等待价格输入框更新
+        await this.sleep(300);
+        
+        // 从价格输入框中获取实际设置的价格
+        const priceInput = document.querySelector('input[step="1e-8"]');
+        if (!priceInput) {
+            throw new Error('未找到价格输入框');
         }
         
-        // 从建议价格文本中提取价格数字
-        const priceText = suggestedPriceText.textContent;
-        const priceMatch = priceText.match(/\$?([\d.]+)/);
-        if (!priceMatch) {
-            throw new Error('无法从建议价格文本中提取价格');
-        }
-        
-        const suggestedPrice = parseFloat(priceMatch[1]);
-        if (isNaN(suggestedPrice)) {
-            throw new Error('建议价格格式无效');
+        const currentPrice = parseFloat(priceInput.value);
+        if (isNaN(currentPrice) || currentPrice <= 0) {
+            throw new Error('价格输入框中的价格无效');
         }
         
         // 计算下浮1%的价格
-        const sellPrice = suggestedPrice * 0.99;
+        const sellPrice = currentPrice * 0.99;
         const formattedPrice = sellPrice.toFixed(8); // 保留8位小数
         
-        this.log(`建议价格: ${suggestedPrice}, 卖出价格: ${formattedPrice}`, 'info');
+        this.log(`当前价格: ${currentPrice}, 卖出价格: ${formattedPrice}`, 'info');
         
         // 查找卖出价格输入框
         const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
