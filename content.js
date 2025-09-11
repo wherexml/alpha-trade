@@ -58,6 +58,9 @@ class BinanceAutoTrader {
         // 强制停止标志
         this.forceStop = false; // 强制停止所有交易
         
+        // 智能交易执行标志
+        this.isSmartTradingExecution = false; // 当前是否在智能交易执行中
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -474,6 +477,9 @@ class BinanceAutoTrader {
             this.log('⚠️ 智能交易模式下无法手动买入，请先停止智能交易', 'warning');
             return;
         }
+        
+        // 保存智能交易标志
+        this.isSmartTradingExecution = isSmartTrading;
 
         let amount = parseFloat(document.getElementById('trade-amount').value);
         if (!amount || amount < 0.1) {
@@ -482,7 +488,7 @@ class BinanceAutoTrader {
         }
 
         // 智能交易模式下的金额调整
-        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+        if (this.isSmartTradingExecution && this.buyAmountRatio !== 1.0) {
             const originalAmount = amount;
             amount = amount * this.buyAmountRatio;
             this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
@@ -508,7 +514,7 @@ class BinanceAutoTrader {
         this.updateTradeCounter();
         
         // 记录开始交易的详细信息
-        if (isSmartTrading) {
+        if (this.isSmartTradingExecution) {
             this.log('🤖 智能交易开始买入', 'success');
         } else {
             this.log('🚀 开始自动买入', 'success');
@@ -520,8 +526,8 @@ class BinanceAutoTrader {
             this.log(`📊 无次数限制`, 'info');
         }
         
-        // 如果是智能交易模式，记录买入比例
-        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+        // 如果是智能交易执行，记录买入比例
+        if (this.isSmartTradingExecution && this.buyAmountRatio !== 1.0) {
             this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
         }
         
@@ -572,6 +578,7 @@ class BinanceAutoTrader {
         this.isRunning = false;
         this.currentState = 'idle';
         this.forceStop = false; // 重置强制停止标志
+        this.isSmartTradingExecution = false; // 重置智能交易执行标志
         
         if (this.orderCheckInterval) {
             clearInterval(this.orderCheckInterval);
@@ -800,52 +807,6 @@ class BinanceAutoTrader {
     }
 
 
-    // 检查并关闭充值弹窗
-    async checkAndCloseDepositModal() {
-        this.log('检查充值弹窗...', 'info');
-        
-        // 若顶部导航栏出现充值按钮高亮，先移走鼠标并滚动规避
-        try {
-            const headerDeposit = document.querySelector('.header-menu-item .deposit-btn');
-            if (headerDeposit) {
-                window.scrollBy(0, 1); // 触发重排，使elementFromPoint命中变化
-            }
-        } catch(_) {}
-        
-        // 查找充值弹窗的关闭按钮
-        const closeButton = document.querySelector('button[aria-label="Close"]') ||
-                           document.querySelector('button[class*="close"]') ||
-                           document.querySelector('button[class*="Close"]') ||
-                           document.querySelector('.modal-close') ||
-                           document.querySelector('[data-testid="close"]');
-        
-        if (closeButton) {
-            this.log('发现充值弹窗，正在关闭...', 'warning');
-            closeButton.click();
-            await this.sleep(500);
-            this.log('充值弹窗已关闭', 'success');
-        } else {
-            // 检查是否有充值相关的内容显示
-            const allDivs = document.querySelectorAll('div');
-            let depositContent = null;
-            
-            for (const div of allDivs) {
-                if (div.textContent.includes('我没有加密货币资产') ||
-                    div.textContent.includes('已拥有数字资产') ||
-                    div.textContent.includes('C2C 交易') ||
-                    div.textContent.includes('数字货币充值')) {
-                    depositContent = div;
-                    break;
-                }
-            }
-            
-            if (depositContent) {
-                this.log('检测到充值界面，尝试按ESC键关闭...', 'warning');
-                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-                await this.sleep(500);
-            }
-        }
-    }
 
     async executeBuy() {
         // 检查强制停止标志
@@ -859,8 +820,7 @@ class BinanceAutoTrader {
         this.log('🔄 开始执行买入操作', 'info');
         this.log(`📊 第 ${this.currentTradeCount + 1} 次买入`, 'info');
 
-        // 0. 检查并关闭可能的充值弹窗
-        await this.checkAndCloseDepositModal();
+        // 0. 充值弹窗检查已移除，简化代码逻辑
 
         // 1. 确保在买入选项卡
         await this.switchToBuyTab();
