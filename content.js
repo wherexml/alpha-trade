@@ -820,18 +820,36 @@ class BinanceAutoTrader {
     // 勾选反向订单
     async checkReverseOrder() {
         this.log('勾选反向订单...', 'info');
+        
+        // 首先尝试在交易面板根节点内查找
         const root = this.getOrderFormRoot();
-        if (!root) throw new Error('未定位到交易面板根节点');
-        // 仅在交易面板作用域内查找
-        let reverseOrderCheckbox = root.querySelector('div[role="checkbox"][aria-checked="false"]');
-        if (!reverseOrderCheckbox) {
-            // 若找不到未勾选的，检查是否已勾选
-            const checkedBox = root.querySelector('div[role="checkbox"][aria-checked="true"]');
-            if (checkedBox) {
-                this.log('反向订单已勾选', 'info');
-                return;
+        let reverseOrderCheckbox = null;
+        
+        if (root) {
+            reverseOrderCheckbox = root.querySelector('div[role="checkbox"][aria-checked="false"]');
+            if (!reverseOrderCheckbox) {
+                // 若找不到未勾选的，检查是否已勾选
+                const checkedBox = root.querySelector('div[role="checkbox"][aria-checked="true"]');
+                if (checkedBox) {
+                    this.log('反向订单已勾选', 'info');
+                    return;
+                }
             }
-            throw new Error('未找到反向订单复选框');
+        }
+        
+        // 如果根节点查找失败，使用全局查找作为备用
+        if (!reverseOrderCheckbox) {
+            this.log('在交易面板根节点内未找到反向订单，尝试全局查找...', 'info');
+            reverseOrderCheckbox = document.querySelector('div[role="checkbox"][aria-checked="false"]');
+            if (!reverseOrderCheckbox) {
+                // 若找不到未勾选的，检查是否已勾选
+                const checkedBox = document.querySelector('div[role="checkbox"][aria-checked="true"]');
+                if (checkedBox) {
+                    this.log('反向订单已勾选', 'info');
+                    return;
+                }
+                throw new Error('未找到反向订单复选框');
+            }
         }
         
         if (!this.safeClick(reverseOrderCheckbox, '勾选反向订单')) throw new Error('安全保护阻止点击复选框');
@@ -1019,10 +1037,21 @@ class BinanceAutoTrader {
         const root = this.getOrderFormRoot();
         let totalInput = this.getCachedElement('totalInput', '#limitTotal');
         if (!totalInput) {
-            const scope = root || document;
-            totalInput = scope.querySelector('#limitTotal') ||
-                        scope.querySelector('input[placeholder*="最小"]') ||
-                        scope.querySelector('input[step="1e-8"]');
+            // 首先在交易面板根节点内查找
+            if (root) {
+                totalInput = root.querySelector('#limitTotal') ||
+                            root.querySelector('input[placeholder*="最小"]') ||
+                            root.querySelector('input[step="1e-8"]');
+            }
+            
+            // 如果根节点查找失败，使用全局查找作为备用
+            if (!totalInput) {
+                this.log('在交易面板根节点内未找到成交额输入框，尝试全局查找...', 'info');
+                totalInput = document.querySelector('#limitTotal') ||
+                            document.querySelector('input[placeholder*="最小"]') ||
+                            document.querySelector('input[step="1e-8"]');
+            }
+            
             this.cachedElements.totalInput = totalInput;
         }
 
@@ -1051,17 +1080,33 @@ class BinanceAutoTrader {
         const root = this.getOrderFormRoot();
         let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
         if (!buyButton) {
-            // 使用更精确的选择器，避免误触充值按钮
-            const scope = root || document;
-            buyButton = scope.querySelector('button.bn-button__buy') ||
-                       scope.querySelector('button[class*="bn-button__buy"]') ||
-                       Array.from(scope.querySelectorAll('button')).find(btn => 
-                           btn.textContent.includes('买入') && 
-                           !btn.textContent.includes('充值') && 
-                           !btn.textContent.includes('卖出') &&
-                           !btn.disabled &&
-                           !btn.classList.contains('deposit-btn')
-                       );
+            // 首先在交易面板根节点内查找
+            if (root) {
+                buyButton = root.querySelector('button.bn-button__buy') ||
+                           root.querySelector('button[class*="bn-button__buy"]') ||
+                           Array.from(root.querySelectorAll('button')).find(btn => 
+                               btn.textContent.includes('买入') && 
+                               !btn.textContent.includes('充值') && 
+                               !btn.textContent.includes('卖出') &&
+                               !btn.disabled &&
+                               !btn.classList.contains('deposit-btn')
+                           );
+            }
+            
+            // 如果根节点查找失败，使用全局查找作为备用
+            if (!buyButton) {
+                this.log('在交易面板根节点内未找到买入按钮，尝试全局查找...', 'info');
+                buyButton = document.querySelector('button.bn-button__buy') ||
+                           document.querySelector('button[class*="bn-button__buy"]') ||
+                           Array.from(document.querySelectorAll('button')).find(btn => 
+                               btn.textContent.includes('买入') && 
+                               !btn.textContent.includes('充值') && 
+                               !btn.textContent.includes('卖出') &&
+                               !btn.disabled &&
+                               !btn.classList.contains('deposit-btn')
+                           );
+            }
+            
             this.cachedElements.buyButton = buyButton;
         }
 
