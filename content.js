@@ -378,10 +378,18 @@ class BinanceAutoTrader {
         this.updateUI();
         this.updateTradeCounter();
         
+        // 记录开始交易的详细信息
+        this.log('🚀 开始自动买入', 'success');
+        this.log(`💰 交易金额: ${amount} USDT`, 'info');
         if (tradeCount > 0) {
-            this.log(`开始自动买入，金额: ${amount} USDT，限制次数: ${tradeCount}`, 'info');
+            this.log(`📊 限制次数: ${tradeCount}`, 'info');
         } else {
-            this.log(`开始自动买入，金额: ${amount} USDT，无次数限制`, 'info');
+            this.log(`📊 无次数限制`, 'info');
+        }
+        
+        // 如果是智能交易模式，记录买入比例
+        if (this.smartTradingMode && this.buyAmountRatio !== 1.0) {
+            this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
         }
         
         try {
@@ -425,6 +433,9 @@ class BinanceAutoTrader {
     }
 
     stopTrading() {
+        const wasRunning = this.isRunning;
+        const completedTrades = this.currentTradeCount;
+        
         this.isRunning = false;
         this.currentState = 'idle';
         
@@ -439,7 +450,17 @@ class BinanceAutoTrader {
         
         this.updateUI();
         this.updateTradeCounter();
-        this.log('买入已停止', 'info');
+        
+        if (wasRunning) {
+            this.log('买入已停止', 'info');
+            if (completedTrades > 0) {
+                this.log(`本次交易完成，共执行 ${completedTrades} 次买入`, 'info');
+            } else {
+                this.log('本次交易未执行任何买入操作', 'info');
+            }
+        } else {
+            this.log('买入已停止（未在运行状态）', 'info');
+        }
     }
 
 
@@ -554,12 +575,18 @@ class BinanceAutoTrader {
                     }
                 }
                 
-                this.log('等待下一轮买入...', 'info');
+                this.log('⏳ 等待下一轮买入...', 'info');
                 
                 // 智能交易模式下，检查是否应该停止
                 if (this.smartTradingMode && this.shouldSmartStop()) {
-                    this.log('智能交易检测到停止条件，结束交易循环', 'info');
+                    this.log('🛑 智能交易检测到停止条件，结束交易循环', 'info');
                     break;
+                }
+                
+                // 记录当前交易进度
+                if (this.maxTradeCount > 0) {
+                    const remaining = this.maxTradeCount - this.currentTradeCount;
+                    this.log(`📈 交易进度: ${this.currentTradeCount}/${this.maxTradeCount} (剩余: ${remaining})`, 'info');
                 }
                 
                 await this.sleep(this.tradeDelay); // 使用配置的延迟时间
@@ -612,7 +639,8 @@ class BinanceAutoTrader {
     async executeBuy() {
         this.tradeStartTime = Date.now(); // 记录交易开始时间
         this.currentState = 'buying';
-        this.log('开始执行买入操作', 'info');
+        this.log('🔄 开始执行买入操作', 'info');
+        this.log(`📊 第 ${this.currentTradeCount + 1} 次买入`, 'info');
 
         // 1. 确保在买入选项卡
         await this.switchToBuyTab();
@@ -633,7 +661,8 @@ class BinanceAutoTrader {
         // 6. 点击买入按钮
         await this.clickBuyButton();
         
-        this.log('买入订单已提交', 'success');
+        this.log('✅ 买入操作执行完成', 'success');
+        this.log('📤 买入订单已提交', 'success');
     }
 
 
@@ -1650,6 +1679,12 @@ class BinanceAutoTrader {
         if (!this.isRunning && this.shouldSmartStart()) {
             this.log('智能交易触发买入', 'info');
             this.startTrading();
+        } else if (!this.isRunning) {
+            // 记录当前信号状态，帮助调试
+            const recentSignals = this.getRecentSignals(3);
+            if (recentSignals.length >= 3) {
+                this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
+            }
         }
     }
 
@@ -1657,22 +1692,28 @@ class BinanceAutoTrader {
     shouldSmartStart() {
         // 检查最近3个信号（按时间从早到晚）
         const recentSignals = this.getRecentSignals(3);
-        if (recentSignals.length < 3) return false;
+        if (recentSignals.length < 3) {
+            this.log(`信号数据不足，当前只有 ${recentSignals.length} 个信号，需要3个`, 'info');
+            return false;
+        }
+
+        this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
 
         // 模式1：平缓期买入 [平缓, 平缓, 平缓]
         if (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat') {
-            this.log('最近3个信号为[平缓, 平缓, 平缓] → 买入50%', 'info');
+            this.log('✅ 检测到买入信号：最近3个信号为[平缓, 平缓, 平缓] → 买入50%', 'success');
             this.buyAmountRatio = 0.5;
             return true;
         }
 
         // 模式2：上升期买入 [上涨, 上涨, 平缓]
         if (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'flat') {
-            this.log('最近3个信号为[上涨, 上涨, 平缓] → 买入100%', 'info');
+            this.log('✅ 检测到买入信号：最近3个信号为[上涨, 上涨, 平缓] → 买入100%', 'success');
             this.buyAmountRatio = 1.0;
             return true;
         }
 
+        this.log(`❌ 不满足买入条件: [${recentSignals.join(', ')}]`, 'info');
         return false;
     }
 
@@ -1680,7 +1721,8 @@ class BinanceAutoTrader {
     shouldSmartStop() {
         // 出现下降信号立即停止交易
         if (this.currentTrend === 'falling') {
-            this.log('检测到下降信号，立即停止交易', 'info');
+            this.log('🚨 检测到下降信号，立即停止交易', 'error');
+            this.log(`当前趋势: ${this.getTrendLabel(this.currentTrend)}`, 'error');
             return true;
         }
         
