@@ -12,6 +12,9 @@ class BinanceAutoTrader {
         this.orderCheckInterval = null;
         this.dragOffset = { x: 0, y: 0 };
         
+        // 作用域与安全点击
+        this.orderRoot = null; // 交易面板根节点
+        
         // 交易次数控制
         this.maxTradeCount = 0; // 最大交易次数，0表示无限制
         this.currentTradeCount = 0; // 当前交易次数
@@ -85,6 +88,7 @@ class BinanceAutoTrader {
                 this.cachedElements[key] = null;
             }
         });
+        this.orderRoot = null;
     }
 
     init() {
@@ -206,6 +210,63 @@ class BinanceAutoTrader {
         
         // Start trend detection
         this.setupTrend();
+    }
+
+    // ================= 安全作用域与点击工具 =================
+    // 找到交易面板根节点，并缓存
+    getOrderFormRoot(refresh = false) {
+        if (!refresh && this.orderRoot && document.body.contains(this.orderRoot)) return this.orderRoot;
+
+        const candidates = [];
+        // 通过“买入”按钮定位
+        const allBtns = Array.from(document.querySelectorAll('button'))
+            .filter(b => /买入/.test(b.textContent || '') && !/充值|卖出/.test(b.textContent || '') && this.isVisible(b));
+        for (const b of allBtns) {
+            const root = b.closest('[role="tabpanel"], form, [class*="panel"], [class*="buySell"], .w-full');
+            if (root && this.isVisible(root) && /成交额|限价|市价|买入/.test(root.textContent || '')) {
+                candidates.push(root);
+            }
+        }
+
+        // 通过成交额输入定位
+        const total = document.querySelector('#limitTotal') || Array.from(document.querySelectorAll('input')).find(i => /成交额|USDT|最小/.test(i.placeholder || '') || i.id === 'limitTotal');
+        if (total) {
+            const root = total.closest('[role="tabpanel"], form, [class*="panel"], [class*="buySell"], .w-full');
+            if (root) candidates.push(root);
+        }
+
+        // 选择包含元素最多的容器作为根
+        this.orderRoot = candidates.sort((a, b) => (b.querySelectorAll('*').length - a.querySelectorAll('*').length))[0] || null;
+        return this.orderRoot;
+    }
+
+    isVisible(el) {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return el.offsetParent !== null && r.width > 0 && r.height > 0;
+    }
+
+    isInHeader(el) {
+        if (!el) return false;
+        const headerLike = el.closest('.header-menu-item, [class*="header"], [id*="header"], [data-testid*="header"]');
+        return !!headerLike;
+    }
+
+    // 安全点击：校验位置、黑名单与作用域
+    safeClick(el, purpose = '') {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        const yGuard = r.top >= 100; // 100px 顶部保护带
+        const text = (el.textContent || '').trim();
+        const isDeposit = /充值|存款|Deposit/i.test(text) || el.classList.contains('deposit-btn');
+        const inHeader = this.isInHeader(el);
+
+        if (isDeposit || inHeader || !yGuard) {
+            this.log(`安全保护: 跳过点击(${purpose}) → header=${inHeader}, y=${Math.round(r.top)}, text="${text}"`, 'warning');
+            return false;
+        }
+        el.click();
+        return true;
     }
 
     // Setup and run the real-time trend detector (from trend.js)
@@ -759,12 +820,13 @@ class BinanceAutoTrader {
     // 勾选反向订单
     async checkReverseOrder() {
         this.log('勾选反向订单...', 'info');
-        
-        // 查找反向订单复选框
-        const reverseOrderCheckbox = document.querySelector('div[role="checkbox"][aria-checked="false"]');
+        const root = this.getOrderFormRoot();
+        if (!root) throw new Error('未定位到交易面板根节点');
+        // 仅在交易面板作用域内查找
+        let reverseOrderCheckbox = root.querySelector('div[role="checkbox"][aria-checked="false"]');
         if (!reverseOrderCheckbox) {
-            // 如果已经勾选了，直接返回
-            const checkedBox = document.querySelector('div[role="checkbox"][aria-checked="true"]');
+            // 若找不到未勾选的，检查是否已勾选
+            const checkedBox = root.querySelector('div[role="checkbox"][aria-checked="true"]');
             if (checkedBox) {
                 this.log('反向订单已勾选', 'info');
                 return;
@@ -772,7 +834,7 @@ class BinanceAutoTrader {
             throw new Error('未找到反向订单复选框');
         }
         
-        reverseOrderCheckbox.click();
+        if (!this.safeClick(reverseOrderCheckbox, '勾选反向订单')) throw new Error('安全保护阻止点击复选框');
         await this.sleep(200);
         
         // 验证是否勾选成功
@@ -884,8 +946,8 @@ class BinanceAutoTrader {
             buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
             if (!buyTab) {
                 // 备用选择器：确保是买入相关的选项卡
-            buyTab = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
-                    document.querySelector('.bn-tab__buySell:first-child');
+                const tablist = document.querySelector('[role="tablist"], .bn-tabs__buySell');
+                buyTab = tablist ? Array.from(tablist.querySelectorAll('[role="tab"], .bn-tab__buySell')).find(t => /买入|Buy/.test(t.textContent || '')) : null;
             }
             this.cachedElements.buyTab = buyTab;
         }
@@ -906,7 +968,7 @@ class BinanceAutoTrader {
         }
         
         // 点击切换
-        buyTab.click();
+        if (!this.safeClick(buyTab, '切换到买入选项卡')) throw new Error('安全保护阻止点击买入选项卡');
         this.log('点击买入选项卡', 'info');
         
         // 等待并验证切换结果
@@ -941,7 +1003,7 @@ class BinanceAutoTrader {
                 this.log(`买入选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
                 const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
                 if (buyTab && !buyTab.textContent.includes('充值') && !buyTab.classList.contains('deposit-btn')) {
-                    buyTab.click();
+                    this.safeClick(buyTab, '重试切换买入选项卡');
                 } else {
                     this.log('检测到充值相关元素，跳过重复点击', 'warning');
                 }
@@ -954,14 +1016,13 @@ class BinanceAutoTrader {
 
     async setTotalAmount(amount) {
         // 使用缓存的成交额输入框
+        const root = this.getOrderFormRoot();
         let totalInput = this.getCachedElement('totalInput', '#limitTotal');
         if (!totalInput) {
-            totalInput = document.querySelector('input[placeholder*="最小"]') ||
-                        document.querySelector('input[step="1e-8"]') ||
-                        Array.from(document.querySelectorAll('input[type="text"]')).find(input => {
-                            const container = input.closest('.w-full');
-                            return container && container.querySelector('div:contains("成交额")');
-                        });
+            const scope = root || document;
+            totalInput = scope.querySelector('#limitTotal') ||
+                        scope.querySelector('input[placeholder*="最小"]') ||
+                        scope.querySelector('input[step="1e-8"]');
             this.cachedElements.totalInput = totalInput;
         }
 
@@ -987,12 +1048,14 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
+        const root = this.getOrderFormRoot();
         let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
         if (!buyButton) {
             // 使用更精确的选择器，避免误触充值按钮
-            buyButton = document.querySelector('button.bn-button__buy') ||
-                       document.querySelector('button[class*="bn-button__buy"]') ||
-                       Array.from(document.querySelectorAll('button')).find(btn => 
+            const scope = root || document;
+            buyButton = scope.querySelector('button.bn-button__buy') ||
+                       scope.querySelector('button[class*="bn-button__buy"]') ||
+                       Array.from(scope.querySelectorAll('button')).find(btn => 
                            btn.textContent.includes('买入') && 
                            !btn.textContent.includes('充值') && 
                            !btn.textContent.includes('卖出') &&
@@ -1015,7 +1078,7 @@ class BinanceAutoTrader {
             throw new Error('买入按钮不可用');
         }
 
-        buyButton.click();
+        if (!this.safeClick(buyButton, '点击买入按钮')) throw new Error('安全保护阻止点击买入按钮');
         await this.sleep(300);
         this.log('点击买入按钮', 'success');
 
@@ -1145,16 +1208,6 @@ class BinanceAutoTrader {
                 if (button && !button.disabled) {
                     return button;
                 }
-            }
-        }
-
-        // 方法7: 模糊匹配 - 查找任何包含确认信息的按钮
-        const allButtons = document.querySelectorAll('button');
-        for (const button of allButtons) {
-            if ((button.textContent.includes('继续') || button.textContent.includes('确认')) && 
-                !button.disabled && 
-                button.offsetParent !== null) { // 确保按钮可见
-                return button;
             }
         }
 
@@ -1567,11 +1620,30 @@ class BinanceAutoTrader {
 
     // 切换智能交易模式
     toggleSmartTrading() {
-        this.smartTradingMode = !this.smartTradingMode;
+        if (this.smartTradingMode) {
+            // 停止智能交易模式
+            this.smartTradingMode = false;
+            this.log('智能交易模式已禁用', 'info');
+            
+            // 如果正在运行交易，立即停止
+            if (this.isRunning) {
+                this.log('停止智能交易，正在停止所有交易...', 'warning');
+                this.stopTrading();
+            }
+            
+            // 停止趋势分析
+            this.stopTrendAnalysis();
+        } else {
+            // 启用智能交易模式
+            this.smartTradingMode = true;
+            this.log('智能交易模式已启用', 'info');
+            
+            // 开始趋势分析
+            this.startTrendAnalysis();
+        }
+        
         this.updateSmartTradingButton();
-        if (this.smartTradingMode) this.log('智能交易模式已启用', 'info');
-        else this.log('智能交易模式已禁用', 'info');
-        // 依赖 TrendDetector 的实时更新，无需额外定时器
+        this.updateUI();
     }
 
     // 更新智能交易按钮状态
