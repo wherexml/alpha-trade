@@ -24,7 +24,8 @@ class BinanceAutoTrader {
         this.lastTradeDate = null; // 上次交易日期
         
         // 配置参数
-        this.tradeDelay = 100; // 每笔买入的延迟时间(ms)
+        this.tradeDelay = 2; // 每笔买入的延迟时间(秒)
+        this.countdownInterval = null; // 倒计时定时器
         
         // 智能交易配置
         this.smartTradingMode = false; // 是否启用智能交易模式
@@ -125,8 +126,8 @@ class BinanceAutoTrader {
                     <input type="number" id="config-count" step="1" min="0" value="40">
                 </div>
                 <div class="config-row">
-                    <label for="config-delay">延迟时间 (ms):</label>
-                    <input type="number" id="config-delay" step="10" min="0" value="2000">
+                    <label for="config-delay">延迟时间 (秒):</label>
+                    <input type="number" id="config-delay" step="0.5" min="0.5" value="2">
                 </div>
                 <div class="config-row">
                     <label for="config-sell-discount">卖出折价率 (%):</label>
@@ -518,6 +519,7 @@ class BinanceAutoTrader {
         this.currentState = 'idle';
         this.forceStop = false; // 重置强制停止标志
         this.isSmartTradingExecution = false; // 重置智能交易执行标志
+        this.clearCountdown(); // 清除倒计时
         
         if (this.orderCheckInterval) {
             clearInterval(this.orderCheckInterval);
@@ -695,7 +697,10 @@ class BinanceAutoTrader {
                     this.log(`📈 交易进度: ${this.currentTradeCount}/${this.maxTradeCount} (剩余: ${remaining})`, 'info');
                 }
                 
-                await this.sleep(this.tradeDelay); // 使用配置的延迟时间
+                // 使用配置的延迟时间（秒转毫秒）
+                const delayMs = this.tradeDelay * 1000;
+                this.startCountdown(this.tradeDelay, '买入延迟');
+                await this.sleep(delayMs);
 
             } catch (error) {
                 consecutiveErrors++;
@@ -1410,6 +1415,32 @@ class BinanceAutoTrader {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+    
+    // 倒计时功能
+    startCountdown(seconds, message = '倒计时') {
+        this.clearCountdown(); // 清除之前的倒计时
+        
+        let remaining = seconds;
+        this.log(`⏰ ${message}: ${remaining}秒`, 'info');
+        
+        this.countdownInterval = setInterval(() => {
+            remaining--;
+            if (remaining > 0) {
+                this.log(`⏰ ${message}: ${remaining}秒`, 'info');
+            } else {
+                this.log(`⏰ ${message}完成`, 'success');
+                this.clearCountdown();
+            }
+        }, 1000);
+    }
+    
+    // 清除倒计时
+    clearCountdown() {
+        if (this.countdownInterval) {
+            clearInterval(this.countdownInterval);
+            this.countdownInterval = null;
+        }
+    }
 
     // 获取UTC+0的当前日期字符串
     getUTCDateString() {
@@ -1524,7 +1555,7 @@ class BinanceAutoTrader {
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
-        configDelay.value = this.tradeDelay || 2000;
+        configDelay.value = this.tradeDelay || 2;
         configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
         
         // 添加实时监听
@@ -1564,10 +1595,10 @@ class BinanceAutoTrader {
         // 监听延迟时间变化
         if (configDelay) {
             configDelay.addEventListener('input', () => {
-                const value = parseInt(configDelay.value);
-                if (!isNaN(value) && value >= 0) {
+                const value = parseFloat(configDelay.value);
+                if (!isNaN(value) && value >= 0.5) {
                     this.tradeDelay = value;
-                    this.log(`延迟时间已更新为: ${value}ms`, 'info');
+                    this.log(`延迟时间已更新为: ${value}秒`, 'info');
                 }
             });
         }
@@ -1588,7 +1619,7 @@ class BinanceAutoTrader {
     async saveConfig() {
         const configAmount = parseFloat(document.getElementById('config-amount').value);
         const configCount = parseInt(document.getElementById('config-count').value);
-        const configDelay = parseInt(document.getElementById('config-delay').value);
+        const configDelay = parseFloat(document.getElementById('config-delay').value);
         const configSellDiscount = parseFloat(document.getElementById('config-sell-discount').value);
         
         if (isNaN(configAmount) || configAmount < 0.1) {
@@ -1601,8 +1632,8 @@ class BinanceAutoTrader {
             return;
         }
         
-        if (isNaN(configDelay) || configDelay < 0) {
-            this.log('延迟时间必须大于等于0ms', 'error');
+        if (isNaN(configDelay) || configDelay < 0.5) {
+            this.log('延迟时间必须大于等于0.5秒', 'error');
             return;
         }
         
@@ -1793,9 +1824,11 @@ class BinanceAutoTrader {
             
             // 智能交易模式下，在趋势分析之间添加延迟
             if (this.smartTradingMode) {
-                const trendDelay = parseInt(document.getElementById('config-delay').value) || 2000;
+                const trendDelay = parseFloat(document.getElementById('config-delay').value) || 2;
                 if (trendDelay > 0) {
-                    await this.sleep(trendDelay);
+                    const delayMs = trendDelay * 1000;
+                    this.startCountdown(trendDelay, '趋势分析延迟');
+                    await this.sleep(delayMs);
                 }
             }
             
@@ -1979,6 +2012,7 @@ class BinanceAutoTrader {
         // 重置智能交易相关状态
         this.smartTradingMode = false;
         this.currentTradeCount = 0; // 重置当前次数
+        this.clearCountdown(); // 清除倒计时
         this.updateTradeCounter(); // 更新显示
         
         // 停止趋势分析
@@ -2037,10 +2071,11 @@ class BinanceAutoTrader {
             this.log('✅ 智能交易买入完成', 'success');
             
             // 智能交易延迟时间检查
-            const tradeDelay = parseInt(document.getElementById('config-delay').value) || 2000;
+            const tradeDelay = parseFloat(document.getElementById('config-delay').value) || 2;
             if (tradeDelay > 0) {
-                this.log(`⏳ 智能交易延迟 ${tradeDelay}ms，避免频繁交易`, 'info');
-                await this.sleep(tradeDelay);
+                const delayMs = tradeDelay * 1000;
+                this.startCountdown(tradeDelay, '智能交易延迟');
+                await this.sleep(delayMs);
             }
             
         } catch (error) {
