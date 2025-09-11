@@ -253,14 +253,6 @@
     gap: 8px;
 }
 
-#binance-auto-trader .emergency-container {
-    display: flex;
-    margin-top: 8px;
-}
-
-#binance-auto-trader .emergency-container .emergency-btn {
-    flex: 1;
-}
 
 #binance-auto-trader .control-btn {
     flex: 1;
@@ -293,21 +285,6 @@
     transform: translateY(-1px);
 }
 
-#binance-auto-trader .emergency-btn {
-    background: linear-gradient(135deg, #28a745 0%, #218838 100%);
-    color: #fff;
-    font-weight: 600;
-    border: 2px solid #28a745;
-    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
-    animation: pulse-green 2s infinite;
-}
-
-#binance-auto-trader .emergency-btn:hover {
-    background: linear-gradient(135deg, #218838 0%, #1e7e34 100%);
-    border-color: #218838;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(40, 167, 69, 0.4);
-}
 @keyframes pulse-green {
     0% {
         box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);

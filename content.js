@@ -72,7 +72,7 @@ class BinanceAutoTrader {
                 <div class="title">币安Alpha自动买入</div>
                 <div class="header-buttons">
                     <button class="config-btn" id="config-btn" title="配置">⚙️</button>
-                    <button class="minimize-btn" id="minimize-btn">—</button>
+                <button class="minimize-btn" id="minimize-btn">—</button>
                 </div>
             </div>
             <div class="config-panel" id="config-panel" style="display: none;">
@@ -108,10 +108,7 @@ class BinanceAutoTrader {
                 <div class="daily-stats" id="daily-stats">今日交易: 0次</div>
                 <div class="control-buttons">
                     <button class="control-btn start-btn" id="start-btn">开始买入</button>
-                    <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止买入</button>
-                </div>
-                <div class="emergency-container">
-                    <button class="control-btn emergency-btn" id="emergency-btn">紧急停止</button>
+                    <button class="control-btn stop-btn" id="stop-btn" style="display: none;">立即停止</button>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
@@ -142,7 +139,6 @@ class BinanceAutoTrader {
     setupUIEvents() {
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
-        const emergencyBtn = document.getElementById('emergency-btn');
         const minimizeBtn = document.getElementById('minimize-btn');
         const clearLogBtn = document.getElementById('clear-log-btn');
         const configBtn = document.getElementById('config-btn');
@@ -151,7 +147,6 @@ class BinanceAutoTrader {
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
-        emergencyBtn.addEventListener('click', () => this.emergencyStop());
         minimizeBtn.addEventListener('click', () => this.toggleMinimize());
         clearLogBtn.addEventListener('click', () => this.clearLogs());
         configBtn.addEventListener('click', () => this.toggleConfigPanel());
@@ -206,8 +201,6 @@ class BinanceAutoTrader {
                 this.startTrading();
             } else if (message.action === 'stop') {
                 this.stopTrading();
-            } else if (message.action === 'emergency_stop') {
-                this.emergencyStop();
             }
         });
     }
@@ -299,21 +292,6 @@ class BinanceAutoTrader {
         this.log('买入已停止', 'info');
     }
 
-    async emergencyStop() {
-        this.log('执行紧急停止...', 'error');
-        
-        // 立即停止所有交易活动
-        this.isRunning = false;
-        this.currentState = 'emergency_stop';
-        
-        if (this.orderCheckInterval) {
-            clearInterval(this.orderCheckInterval);
-            this.orderCheckInterval = null;
-        }
-            
-            this.log('紧急停止完成', 'success');
-        this.updateUI();
-    }
 
 
 
@@ -341,6 +319,7 @@ class BinanceAutoTrader {
         if (this.isRunning) {
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
+            stopBtn.textContent = '立即停止';
             this.statusDisplay.textContent = '买入运行中';
             this.statusDisplay.className = 'status-display running';
         } else {
@@ -1054,7 +1033,7 @@ class BinanceAutoTrader {
             if (storedData && storedData.date === today) {
                 this.dailyTradeCount = storedData.count || 0;
                 this.lastTradeDate = storedData.date;
-        } else {
+            } else {
                 // 新的一天，重置计数
                 this.dailyTradeCount = 0;
                 this.lastTradeDate = today;
@@ -1158,17 +1137,17 @@ class BinanceAutoTrader {
         
         if (isNaN(configAmount) || configAmount < 0.1) {
             this.log('交易金额必须大于等于0.1 USDT', 'error');
-            return;
-        }
-        
+                    return;
+                }
+
         if (isNaN(configCount) || configCount < 0) {
             this.log('交易次数必须大于等于0', 'error');
-            return;
-        }
-        
+                        return;
+                    }
+                    
         if (isNaN(configDelay) || configDelay < 0) {
             this.log('延迟时间必须大于等于0ms', 'error');
-            return;
+                        return;
         }
         
         // 更新配置
