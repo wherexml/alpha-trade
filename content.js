@@ -1122,11 +1122,16 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
-        let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
+        // 使用精确选择器查找买入按钮
+        let buyButton = this.getCachedElement('buyButton', 'button.bn-button.bn-button__buy');
+        
         if (!buyButton) {
-            buyButton = document.querySelector('button[class*="buy"]') ||
-                       Array.from(document.querySelectorAll('button')).find(btn => 
-                           btn.textContent.includes('买入') && !btn.disabled
+            // 直接查找买入按钮，排除充值按钮
+            buyButton = document.querySelector('button.bn-button.bn-button__buy') ||
+                       Array.from(document.querySelectorAll('button.bn-button.bn-button__buy')).find(btn => 
+                           btn.textContent.includes('买入') && 
+                           !btn.textContent.includes('充值') && 
+                           !btn.disabled
                        );
             this.cachedElements.buyButton = buyButton;
         }
@@ -1135,10 +1140,16 @@ class BinanceAutoTrader {
             throw new Error('未找到买入按钮');
         }
 
+        // 额外验证：确保不是充值按钮
+        if (buyButton.textContent.includes('充值') || buyButton.classList.contains('deposit-btn')) {
+            throw new Error('检测到充值按钮，跳过点击');
+        }
+
         if (buyButton.disabled) {
             throw new Error('买入按钮不可用');
         }
 
+        // 直接点击，移除复杂的safeClick逻辑
         buyButton.click();
         await this.sleep(300);
         this.log('点击买入按钮', 'success');
