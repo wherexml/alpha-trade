@@ -20,6 +20,9 @@ class BinanceAutoTrader {
         this.dailyTradeCount = 0; // 今日交易次数
         this.lastTradeDate = null; // 上次交易日期
         
+        // 配置参数
+        this.tradeDelay = 100; // 每笔买入的延迟时间(ms)
+        
         // DOM元素缓存
         this.cachedElements = {
             buyTab: null,
@@ -67,12 +70,34 @@ class BinanceAutoTrader {
         this.ui.innerHTML = `
             <div class="header">
                 <div class="title">币安Alpha自动买入</div>
-                <button class="minimize-btn" id="minimize-btn">—</button>
+                <div class="header-buttons">
+                    <button class="config-btn" id="config-btn" title="配置">⚙️</button>
+                    <button class="minimize-btn" id="minimize-btn">—</button>
+                </div>
+            </div>
+            <div class="config-panel" id="config-panel" style="display: none;">
+                <div class="config-title">配置设置</div>
+                <div class="config-row">
+                    <label for="config-amount">交易金额 (USDT):</label>
+                    <input type="number" id="config-amount" step="0.1" min="0.1" value="200">
+                </div>
+                <div class="config-row">
+                    <label for="config-count">交易次数:</label>
+                    <input type="number" id="config-count" step="1" min="0" value="40">
+                </div>
+                <div class="config-row">
+                    <label for="config-delay">延迟时间 (ms):</label>
+                    <input type="number" id="config-delay" step="10" min="0" value="100">
+                </div>
+                <div class="config-buttons">
+                    <button class="config-save-btn" id="config-save-btn">保存</button>
+                    <button class="config-cancel-btn" id="config-cancel-btn">取消</button>
+                </div>
             </div>
             <div class="content">
                 <div class="input-row">
                     <label for="trade-amount">交易金额 (USDT):</label>
-                    <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1" value="250">
+                    <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1" value="200">
                 </div>
                 <div class="input-row">
                     <label for="trade-count">买入次数限制:</label>
@@ -111,6 +136,7 @@ class BinanceAutoTrader {
         this.setupUIEvents();
         this.makeDraggable();
         this.loadDailyStats();
+        this.loadUserConfig();
     }
 
     setupUIEvents() {
@@ -119,12 +145,18 @@ class BinanceAutoTrader {
         const emergencyBtn = document.getElementById('emergency-btn');
         const minimizeBtn = document.getElementById('minimize-btn');
         const clearLogBtn = document.getElementById('clear-log-btn');
+        const configBtn = document.getElementById('config-btn');
+        const configSaveBtn = document.getElementById('config-save-btn');
+        const configCancelBtn = document.getElementById('config-cancel-btn');
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
         emergencyBtn.addEventListener('click', () => this.emergencyStop());
         minimizeBtn.addEventListener('click', () => this.toggleMinimize());
         clearLogBtn.addEventListener('click', () => this.clearLogs());
+        configBtn.addEventListener('click', () => this.toggleConfigPanel());
+        configSaveBtn.addEventListener('click', () => this.saveConfig());
+        configCancelBtn.addEventListener('click', () => this.cancelConfig());
     }
 
     makeDraggable() {
@@ -394,7 +426,7 @@ class BinanceAutoTrader {
                 }
                 
                 this.log('等待下一轮买入...', 'info');
-                await this.sleep(500); // 减少到500ms后开始下一轮
+                await this.sleep(this.tradeDelay); // 使用配置的延迟时间
 
             } catch (error) {
                 consecutiveErrors++;
@@ -1092,6 +1124,99 @@ class BinanceAutoTrader {
                 resolve();
             });
         });
+    }
+
+    // 切换配置面板显示
+    toggleConfigPanel() {
+        const configPanel = document.getElementById('config-panel');
+        const isVisible = configPanel.style.display !== 'none';
+        
+        if (isVisible) {
+            configPanel.style.display = 'none';
+        } else {
+            configPanel.style.display = 'block';
+            this.loadConfigToPanel();
+        }
+    }
+
+    // 加载配置到配置面板
+    loadConfigToPanel() {
+        const configAmount = document.getElementById('config-amount');
+        const configCount = document.getElementById('config-count');
+        const configDelay = document.getElementById('config-delay');
+        
+        configAmount.value = this.currentAmount || 200;
+        configCount.value = this.maxTradeCount || 40;
+        configDelay.value = this.tradeDelay || 100;
+    }
+
+    // 保存配置
+    async saveConfig() {
+        const configAmount = parseFloat(document.getElementById('config-amount').value);
+        const configCount = parseInt(document.getElementById('config-count').value);
+        const configDelay = parseInt(document.getElementById('config-delay').value);
+        
+        if (isNaN(configAmount) || configAmount < 0.1) {
+            this.log('交易金额必须大于等于0.1 USDT', 'error');
+            return;
+        }
+        
+        if (isNaN(configCount) || configCount < 0) {
+            this.log('交易次数必须大于等于0', 'error');
+            return;
+        }
+        
+        if (isNaN(configDelay) || configDelay < 0) {
+            this.log('延迟时间必须大于等于0ms', 'error');
+            return;
+        }
+        
+        // 更新配置
+        this.currentAmount = configAmount;
+        this.maxTradeCount = configCount;
+        this.tradeDelay = configDelay;
+        
+        // 更新主界面
+        document.getElementById('trade-amount').value = configAmount;
+        document.getElementById('trade-count').value = configCount;
+        
+        // 保存到本地存储
+        await this.setStorageData('userConfig', {
+            amount: configAmount,
+            count: configCount,
+            delay: configDelay
+        });
+        
+        this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}ms`, 'success');
+        
+        // 隐藏配置面板
+        document.getElementById('config-panel').style.display = 'none';
+    }
+
+    // 取消配置
+    cancelConfig() {
+        document.getElementById('config-panel').style.display = 'none';
+    }
+
+    // 加载用户配置
+    async loadUserConfig() {
+        try {
+            const userConfig = await this.getStorageData('userConfig');
+            if (userConfig) {
+                this.currentAmount = userConfig.amount || 200;
+                this.maxTradeCount = userConfig.count || 40;
+                this.tradeDelay = userConfig.delay || 100;
+                
+                // 更新界面显示
+                document.getElementById('trade-amount').value = this.currentAmount;
+                document.getElementById('trade-count').value = this.maxTradeCount;
+                this.updateTradeCounter();
+                
+                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms`, 'info');
+            }
+        } catch (error) {
+            this.log(`加载用户配置失败: ${error.message}`, 'error');
+        }
     }
 }
 
