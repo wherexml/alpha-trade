@@ -1420,7 +1420,7 @@ class BinanceAutoTrader {
     startCountdown(seconds, message = '倒计时') {
         this.clearCountdown(); // 清除之前的倒计时
         
-        let remaining = seconds;
+        let remaining = Math.ceil(seconds);
         this.log(`⏰ ${message}: ${remaining}秒`, 'info');
         
         this.countdownInterval = setInterval(() => {
@@ -1428,7 +1428,7 @@ class BinanceAutoTrader {
             if (remaining > 0) {
                 this.log(`⏰ ${message}: ${remaining}秒`, 'info');
             } else {
-                this.log(`⏰ ${message}完成`, 'success');
+                this.log(`✅ ${message}完成`, 'success');
                 this.clearCountdown();
             }
         }, 1000);
@@ -1954,7 +1954,7 @@ class BinanceAutoTrader {
             return 'rising';
         } else if (percentageChange < -threshold) {
             return 'falling';
-        } else {
+                } else {
             return 'flat';
         }
     }
