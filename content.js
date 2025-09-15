@@ -1110,105 +1110,206 @@ class BinanceAutoTrader {
         }
         
         if (confirmButton) {
-            this.log('发现买入确认弹窗，点击继续', 'info');
+            this.log('发现买入确认弹窗，准备点击确认按钮', 'info');
+            
+            // 记录点击前弹窗状态（避免递归调用）
+            const beforeClickExists = true; // 既然找到了confirmButton，说明弹窗存在
+            this.log(`点击前弹窗存在: ${beforeClickExists}`, 'info');
             
             // 确保按钮可见和可点击
             confirmButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await this.sleep(100);
+            await this.sleep(200);
             
-            // 尝试多种点击方式
+            let clickSuccess = false;
+            
+            // 方式1: 聚焦并直接点击
             try {
-                // 方式1: 直接点击
-            confirmButton.click();
-                this.log('直接点击确认按钮', 'info');
+                confirmButton.focus();
+                await this.sleep(100);
+                confirmButton.click();
+                await this.sleep(800); // 等待更长时间观察效果
+                
+                // 检查弹窗是否消失
+                const afterClickModal = this.findBuyConfirmButton();
+                const afterClickExists = afterClickModal !== null;
+                this.log(`点击后弹窗存在: ${afterClickExists}`, 'info');
+                
+                if (beforeClickExists && !afterClickExists) {
+                    clickSuccess = true;
+                    this.log('✅ 直接点击成功，弹窗已消失', 'success');
+                } else if (beforeClickExists && afterClickExists) {
+                    this.log('⚠️ 直接点击后弹窗仍存在，尝试其他方式', 'warning');
+                }
             } catch (error) {
                 this.log(`直接点击失败: ${error.message}`, 'warning');
+            }
+            
+            // 方式2: 如果直接点击失败，尝试多种事件
+            if (!clickSuccess && beforeClickExists) {
+                this.log('尝试事件点击...', 'info');
                 try {
-                    // 方式2: 触发点击事件
-                    const clickEvent = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    confirmButton.dispatchEvent(clickEvent);
-                    this.log('通过事件触发点击', 'info');
+                    // 触发完整的点击事件序列
+                    const events = [
+                        new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+                        new MouseEvent('mouseup', { bubbles: true, cancelable: true }),
+                        new MouseEvent('click', { bubbles: true, cancelable: true })
+                    ];
+                    
+                    for (const event of events) {
+                        confirmButton.dispatchEvent(event);
+                        await this.sleep(50);
+                    }
+                    
+                    await this.sleep(800);
+                    
+                    // 再次检查弹窗
+                    const finalModal = this.findBuyConfirmButton();
+                    const finalExists = finalModal !== null;
+                    this.log(`事件点击后弹窗存在: ${finalExists}`, 'info');
+                    
+                    if (!finalExists) {
+                        clickSuccess = true;
+                        this.log('✅ 事件点击成功，弹窗已消失', 'success');
+                    }
                 } catch (eventError) {
                     this.log(`事件点击失败: ${eventError.message}`, 'warning');
                 }
             }
             
-            await this.sleep(500);
-            this.log('确认买入订单', 'success');
+            if (clickSuccess) {
+                this.log('✅ 确认按钮点击成功，买入订单已确认', 'success');
+            } else {
+                this.log('❌ 确认按钮点击失败，弹窗仍然存在，跳过此次交易', 'error');
+                // 抛出错误以停止当前交易流程
+                throw new Error('确认弹窗无法关闭，停止交易避免重复操作');
+            }
         } else {
             this.log('未发现买入确认弹窗，继续执行', 'info');
         }
     }
 
+    // 检查是否为充值按钮
+    isDepositButton(button) {
+        if (!button) return false;
+        
+        return button.classList.contains('deposit-btn') || 
+               button.textContent.includes('充值') ||
+               button.querySelector('.deposit-icon') ||
+               button.className.includes('deposit');
+    }
+
     findBuyConfirmButton() {
-        // 方法1: 查找反向订单确认弹窗（优先级最高）
-        const reverseOrderModal = document.querySelector('[class*="modal"]:not([style*="display: none"])');
-        if (reverseOrderModal) {
-            // 查找弹窗中的确认按钮
-            const confirmButton = reverseOrderModal.querySelector('button[class*="primary"]') ||
-                                reverseOrderModal.querySelector('button[class*="bn-button"]');
-            if (confirmButton && (confirmButton.textContent.includes('确认') || confirmButton.textContent.includes('继续'))) {
-                this.log('找到反向订单确认弹窗按钮', 'info');
-                return confirmButton;
-            }
-        }
-
-        // 方法2: 查找包含"反向订单"文本的弹窗
-        const reverseOrderElements = document.querySelectorAll('*');
-        for (const element of reverseOrderElements) {
-            if (element.textContent.includes('反向订单') && element.textContent.includes('确认')) {
-                const button = element.querySelector('button[class*="primary"]') ||
-                             element.querySelector('button[class*="bn-button"]');
-                if (button && !button.disabled) {
-                    this.log('通过反向订单文本找到确认按钮', 'info');
-                    return button;
+        this.log('开始查找买入确认按钮...', 'info');
+        
+        // 方法1: 查找可见的弹窗中的确认按钮（最直接有效）
+        const modalSelectors = [
+            '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]', 
+            '[style*="position: fixed"]', '[style*="position: absolute"]',
+            'div[class*="bn-"]', '[role="dialog"]'
+        ];
+        
+        const visibleModals = [];
+        for (const selector of modalSelectors) {
+            const elements = document.querySelectorAll(selector);
+            for (const el of elements) {
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none' && 
+                    style.visibility !== 'hidden' && 
+                    style.opacity !== '0' &&
+                    el.offsetWidth > 100 &&  // 确保是实际的弹窗
+                    el.offsetHeight > 100) {
+                    visibleModals.push(el);
                 }
             }
         }
-
-        // 方法3: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
-        const confirmContainers = document.querySelectorAll('[class*="px-[24px]"][class*="pb-[24px]"]');
-        for (const container of confirmContainers) {
-            // 检查是否包含买入相关信息
-            if (container.textContent.includes('限价') && container.textContent.includes('买入')) {
-                const button = container.querySelector('button.bn-button.bn-button__primary');
-                if (button && button.textContent.includes('继续')) {
-                    return button;
+        
+        for (const modal of visibleModals) {
+            const modalText = modal.textContent || '';
+            
+            // 确保是交易确认弹窗，不是充值弹窗
+            const hasTradeInfo = modalText.includes('HEMI') || 
+                               modalText.includes('USDT') || 
+                               modalText.includes('限价') || 
+                               modalText.includes('买入') || 
+                               modalText.includes('成交额') ||
+                               modalText.includes('数量');
+            
+            const hasDepositInfo = modalText.includes('充值') || modalText.includes('deposit');
+            
+            if (hasTradeInfo && !hasDepositInfo && modalText.length > 100) {
+                this.log(`发现交易确认弹窗，内容长度: ${modalText.length}`, 'info');
+                
+                // 输出弹窗中所有按钮的详细信息用于调试
+                const allButtons = modal.querySelectorAll('button');
+                this.log(`弹窗中共找到 ${allButtons.length} 个按钮:`, 'info');
+                
+                for (let i = 0; i < allButtons.length; i++) {
+                    const btn = allButtons[i];
+                    const btnText = btn.textContent?.trim() || '';
+                    const btnClass = btn.className || '';
+                    const isVisible = this.isVisible(btn);
+                    const isDisabled = btn.disabled;
+                    const isDeposit = this.isDepositButton(btn);
+                    
+                    this.log(`按钮${i + 1}: 文本="${btnText}", 类名="${btnClass}", 可见=${isVisible}, 禁用=${isDisabled}, 充值=${isDeposit}`, 'info');
+                    
+                    // 放宽匹配条件 - 检查更多可能的确认按钮文本
+                    const possibleConfirmTexts = ['确认', '继续', '下单', '提交', '买入', 'Confirm', 'Continue', 'Submit'];
+                    const isConfirmText = possibleConfirmTexts.some(text => btnText.includes(text));
+                    
+                    if (isConfirmText && !isDeposit && !isDisabled && isVisible) {
+                        this.log(`✅ 找到匹配的确认按钮: "${btnText}"`, 'success');
+                        return btn;
+                    }
+                }
+                
+                // 如果没找到文本匹配的，查找primary按钮
+                const primaryButtons = modal.querySelectorAll('button[class*="primary"]');
+                this.log(`查找primary按钮，共找到 ${primaryButtons.length} 个`, 'info');
+                
+                for (const btn of primaryButtons) {
+                    const btnText = btn.textContent?.trim() || '';
+                    const isDeposit = this.isDepositButton(btn);
+                    const isVisible = this.isVisible(btn);
+                    
+                    this.log(`Primary按钮: 文本="${btnText}", 充值=${isDeposit}, 可见=${isVisible}`, 'info');
+                    
+                    if (!isDeposit && !btn.disabled && isVisible) {
+                        this.log(`✅ 使用primary按钮: "${btnText}"`, 'info');
+                        return btn;
+                    }
                 }
             }
         }
-
-        // 方法4: 直接查找"继续"按钮
-        let confirmButton = Array.from(document.querySelectorAll('button')).find(btn => 
-            btn.textContent.trim() === '继续' && !btn.disabled
-        );
-
-        if (confirmButton) return confirmButton;
-
-        // 方法5: 查找确认弹窗中的主要按钮
-        confirmButton = document.querySelector('.bn-button__primary[class*="w-full"]') ||
-                       document.querySelector('button.bn-button.bn-button__primary[class*="w-full"]');
-
-        if (confirmButton && (confirmButton.textContent.includes('继续') || confirmButton.textContent.includes('确认'))) {
-            return confirmButton;
-        }
-
-        // 方法6: 查找包含订单详情的弹窗
-        const orderDetailsElements = document.querySelectorAll('[class*="类型"], [class*="数量"], [class*="成交额"]');
-        for (const element of orderDetailsElements) {
-            const container = element.closest('[class*="px-[24px]"]');
-            if (container) {
-                const button = container.querySelector('button[class*="primary"]');
-                if (button && !button.disabled) {
-                    return button;
+        
+        // 方法2: 简化页面查找 - 只查找可能的确认按钮文本
+        this.log('在页面中查找确认按钮...', 'info');
+        const possibleConfirmTexts = ['确认', '继续', '下单', '提交'];
+        
+        for (const text of possibleConfirmTexts) {
+            const buttons = Array.from(document.querySelectorAll('button'))
+                .filter(btn => btn.textContent?.trim() === text);
+            
+            for (const btn of buttons) {
+                if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
+                    this.log(`✅ 在页面找到确认按钮: "${text}", 类名: ${btn.className}`, 'success');
+                    return btn;
                 }
             }
         }
-
+        
+        // 方法3: 最后尝试w-full的primary按钮
+        this.log('查找w-full primary按钮...', 'info');
+        const primaryButtons = document.querySelectorAll('button.bn-button__primary[class*="w-full"]');
+        for (const btn of primaryButtons) {
+            const btnText = btn.textContent?.trim() || '';
+            if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn) && btnText) {
+                this.log(`✅ 使用w-full primary按钮: "${btnText}", 类名: ${btn.className}`, 'info');
+                return btn;
+            }
+        }
+        
+        this.log('未找到符合条件的确认按钮', 'warning');
         return null;
     }
 
