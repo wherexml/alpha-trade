@@ -44,23 +44,26 @@ class BinanceAutoTrader {
         // 连续信号判断
         this.consecutiveFlatSignals = 0; // 连续平缓信号计数
         this.requiredConsecutiveFlat = 3; // 需要连续3次平缓信号
-        
+
         // 智能交易买入比例
         this.buyAmountRatio = 1.0; // 默认买入100%金额
-        
+
         // 卖出折价率
         this.sellDiscountRate = 0.02; // 默认2%折价率
-        
+
         // 下降信号等待机制
         this.lastFallingSignalIndex = -1; // 最后一次下降信号在trendData中的索引
         this.fallingSignalWaitCount = 10; // 下降信号后需要等待的信号数量
         this.canStartBuying = true; // 是否可以开始买入
-        
+
         // 强制停止标志
         this.forceStop = false; // 强制停止所有交易
-        
+
         // 智能交易执行标志
         this.isSmartTradingExecution = false; // 当前是否在智能交易执行中
+
+        // 当前会话模式：idle、manual、smart
+        this.sessionMode = 'idle';
         
         // DOM元素缓存
         this.cachedElements = {
@@ -172,11 +175,11 @@ class BinanceAutoTrader {
                 <div class="trade-counter" id="trade-counter">买入次数: 0/40</div>
                 <div class="daily-stats" id="daily-stats">今日交易: 0次</div>
                 <div class="control-buttons">
-                    <button class="control-btn start-btn" id="start-btn">自动买入</button>
-                    <button class="control-btn stop-btn" id="stop-btn" style="display: none;">立即停止</button>
+                    <button class="control-btn start-btn" id="start-btn">开始交易</button>
+                    <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
                 </div>
                 <div class="smart-trading-control">
-                    <button class="smart-trading-btn" id="smart-trading-btn">智能交易</button>
+                    <button class="smart-trading-btn" id="smart-trading-btn">智能交易：关闭</button>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
@@ -312,8 +315,8 @@ class BinanceAutoTrader {
         const action = this.computeActionFromSignals();
         this.applyTrendAction(action);
 
-        // When smart mode is on, evaluate auto conditions using latest signals
-        if (this.smartTradingMode) {
+        // Smart session: only在运行期间检查趋势条件
+        if (this.smartTradingMode && this.isRunning && this.sessionMode === 'smart') {
             this.checkSmartTradingConditions();
         }
     }
@@ -409,17 +412,13 @@ class BinanceAutoTrader {
         });
     }
 
-    async startTrading(isSmartTrading = false) {
-        if (this.isRunning) return;
-
-        // 只有用户手动点击时才检查智能交易模式
-        if (!isSmartTrading && this.smartTradingMode) {
-            this.log('⚠️ 智能交易模式下无法手动买入，请先停止智能交易', 'warning');
+    async startTrading() {
+        if (this.isRunning) {
+            this.log('⚠️ 交易已在进行中', 'warning');
             return;
         }
-        
-        // 保存智能交易标志
-        this.isSmartTradingExecution = isSmartTrading;
+
+        const isSmartSession = this.smartTradingMode;
 
         let amount = parseFloat(document.getElementById('trade-amount').value);
         if (!amount || amount < 0.1) {
@@ -427,55 +426,48 @@ class BinanceAutoTrader {
             return;
         }
 
-        // 智能交易模式下的金额调整
-        if (this.isSmartTradingExecution && this.buyAmountRatio !== 1.0) {
-            const originalAmount = amount;
-            amount = amount * this.buyAmountRatio;
-            this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
-        }
-
         const tradeCount = parseInt(document.getElementById('trade-count').value) || 0;
-        
-        // 安全检查
+
         if (!this.performSafetyChecks()) {
             return;
         }
 
         this.isRunning = true;
+        this.sessionMode = isSmartSession ? 'smart' : 'manual';
+        this.forceStop = false;
+        this.isSmartTradingExecution = false;
         this.currentAmount = amount;
         this.maxTradeCount = tradeCount;
-        
-        // 如果不是智能交易模式，重置计数；智能交易模式保持已有计数
-        if (!this.smartTradingMode) {
         this.currentTradeCount = 0;
+
+        if (isSmartSession) {
+            this.buyAmountRatio = 1.0;
+            this.lastFallingSignalIndex = -1;
+            this.canStartBuying = true;
         }
-        
+
         this.updateUI();
         this.updateTradeCounter();
-        
-        // 记录开始交易的详细信息
-        if (this.isSmartTradingExecution) {
-            this.log('🤖 智能交易开始买入', 'success');
-        } else {
-            this.log('🚀 开始自动买入', 'success');
-        }
-        this.log(`💰 交易金额: ${amount} USDT`, 'info');
+
+        this.log(isSmartSession ? '🤖 智能交易启动，等待趋势信号' : '🚀 开始自动买入', 'success');
+        this.log(`💰 基础交易金额: ${amount} USDT`, 'info');
         if (tradeCount > 0) {
             this.log(`📊 限制次数: ${tradeCount}`, 'info');
         } else {
-            this.log(`📊 无次数限制`, 'info');
+            this.log('📊 无次数限制', 'info');
         }
-        
-        // 如果是智能交易执行，记录买入比例
-        if (this.isSmartTradingExecution && this.buyAmountRatio !== 1.0) {
-            this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
-        }
-        
-        try {
-            await this.runTradingLoop();
-        } catch (error) {
-            this.log(`交易过程出错: ${error.message}`, 'error');
-            this.stopTrading();
+
+        if (isSmartSession) {
+            this.log('📡 将根据趋势信号择机下单', 'info');
+            // 立即检查一次当前信号，避免错过已经满足条件的情况
+            this.checkSmartTradingConditions();
+        } else {
+            try {
+                await this.runTradingLoop();
+            } catch (error) {
+                this.log(`交易过程出错: ${error.message}`, 'error');
+                this.stopTrading();
+            }
         }
     }
 
@@ -519,6 +511,7 @@ class BinanceAutoTrader {
         this.currentState = 'idle';
         this.forceStop = false; // 重置强制停止标志
         this.isSmartTradingExecution = false; // 重置智能交易执行标志
+        this.sessionMode = 'idle';
         this.clearCountdown(); // 清除倒计时
         
         if (this.orderCheckInterval) {
@@ -528,7 +521,6 @@ class BinanceAutoTrader {
         
         // 重置交易次数计数器
         this.currentTradeCount = 0;
-        this.maxTradeCount = 0;
         
         this.updateUI();
         this.updateTradeCounter();
@@ -554,6 +546,7 @@ class BinanceAutoTrader {
         // 立即停止所有交易活动
         this.isRunning = false;
         this.currentState = 'auto_stop';
+        this.sessionMode = 'idle';
         
         if (this.orderCheckInterval) {
             clearInterval(this.orderCheckInterval);
@@ -570,39 +563,28 @@ class BinanceAutoTrader {
         const stopBtn = document.getElementById('stop-btn');
         
         if (this.isRunning) {
-            // 智能交易模式下，即使运行中也不显示停止按钮
-            if (this.smartTradingMode) {
-                startBtn.style.display = 'block';
-                startBtn.disabled = true;
-                startBtn.textContent = '智能交易中';
-                startBtn.title = '智能交易模式下无法手动操作';
-                stopBtn.style.display = 'none';
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            stopBtn.textContent = '停止交易';
+            if (this.sessionMode === 'smart') {
                 this.statusDisplay.textContent = '智能交易运行中';
                 this.statusDisplay.className = 'status-display smart-trading';
             } else {
-            startBtn.style.display = 'none';
-            stopBtn.style.display = 'block';
-                stopBtn.textContent = '立即停止';
                 this.statusDisplay.textContent = '买入运行中';
-            this.statusDisplay.className = 'status-display running';
+                this.statusDisplay.className = 'status-display running';
             }
         } else {
             startBtn.style.display = 'block';
             stopBtn.style.display = 'none';
-            
-            // 智能交易模式下的按钮状态控制
+            startBtn.disabled = false;
+            startBtn.textContent = '开始交易';
+            startBtn.title = '';
             if (this.smartTradingMode) {
-                startBtn.disabled = true;
-                startBtn.textContent = '智能交易中';
-                startBtn.title = '智能交易模式下无法手动买入，请先停止智能交易';
-                this.statusDisplay.textContent = '智能交易模式';
+                this.statusDisplay.textContent = '智能交易待机';
                 this.statusDisplay.className = 'status-display smart-trading';
             } else {
-                startBtn.disabled = false;
-                startBtn.textContent = '自动买入';
-                startBtn.title = '';
-            this.statusDisplay.textContent = '等待开始';
-            this.statusDisplay.className = 'status-display';
+                this.statusDisplay.textContent = '等待开始';
+                this.statusDisplay.className = 'status-display';
             }
         }
     }
@@ -1801,31 +1783,21 @@ class BinanceAutoTrader {
 
     // 切换智能交易模式
     toggleSmartTrading() {
-        if (this.smartTradingMode) {
-            // 停止智能交易模式
-            this.smartTradingMode = false;
-            this.log('智能交易模式已禁用', 'info');
-            
-            // 设置强制停止标志
-            this.forceStop = true;
-            
-            // 如果正在运行交易，立即停止
-            if (this.isRunning) {
-                this.log('停止智能交易，正在停止所有交易...', 'warning');
-                this.stopTrading();
-            }
-            
-            // 停止趋势分析
-            this.stopTrendAnalysis();
-        } else {
-            // 启用智能交易模式
-            this.smartTradingMode = true;
-            this.log('智能交易模式已启用', 'info');
-            
-            // 开始趋势分析
-            this.startTrendAnalysis();
+        if (this.isRunning) {
+            this.log('⚠️ 交易进行中无法切换智能模式，请先停止当前交易', 'warning');
+            return;
         }
-        
+
+        this.smartTradingMode = !this.smartTradingMode;
+        if (this.smartTradingMode) {
+            this.log('智能交易模式已开启', 'info');
+            this.startTrendAnalysis();
+        } else {
+            this.log('智能交易模式已关闭', 'info');
+            this.stopTrendAnalysis();
+            this.buyAmountRatio = 1.0;
+        }
+
         this.updateSmartTradingButton();
         this.updateUI();
     }
@@ -1833,12 +1805,13 @@ class BinanceAutoTrader {
     // 更新智能交易按钮状态
     updateSmartTradingButton() {
         const btn = document.getElementById('smart-trading-btn');
+        if (!btn) return;
         if (this.smartTradingMode) {
-            btn.textContent = '停止智能交易';
-            btn.className = 'smart-trading-btn active';
+            btn.textContent = '智能交易：开启';
+            btn.classList.add('active');
         } else {
-            btn.textContent = '智能交易';
-            btn.className = 'smart-trading-btn';
+            btn.textContent = '智能交易：关闭';
+            btn.classList.remove('active');
         }
     }
 
@@ -1917,14 +1890,14 @@ class BinanceAutoTrader {
             this.updateConsecutiveSignals(trend);
             
             // 检查智能交易条件
-            if (this.smartTradingMode) {
+            if (this.smartTradingMode && this.isRunning && this.sessionMode === 'smart') {
                 this.checkSmartTradingConditions();
             }
             
             this.log(`趋势分析: ${trendDataString}`, 'info');
             
             // 智能交易模式下，在趋势分析之间添加延迟
-            if (this.smartTradingMode) {
+            if (this.smartTradingMode && this.isRunning && this.sessionMode === 'smart') {
                 const trendDelay = parseFloat(document.getElementById('config-delay').value) || 2;
                 if (trendDelay > 0) {
                     const delayMs = trendDelay * 1000;
@@ -2073,156 +2046,105 @@ class BinanceAutoTrader {
 
     // 检查智能交易条件
     checkSmartTradingConditions() {
-        // 智能交易模式下，无论是否在运行都要检查买入条件
-        const recentSignals = this.getRecentSignals(3);
-        if (recentSignals.length >= 3) {
-            this.log(`分析买入信号: [${recentSignals.join(', ')}]`, 'info');
-        }
-        
-        if (this.shouldSmartStart()) {
-            // 检查买入次数限制
-            const maxTradeCount = parseInt(document.getElementById('trade-count').value) || 0;
-            if (maxTradeCount > 0 && this.currentTradeCount >= maxTradeCount) {
-                this.log(`🛑 智能交易达到买入次数限制 (${this.currentTradeCount}/${maxTradeCount})，自动停止`, 'warning');
-                this.stopSmartTrading();
-                return;
-            }
-            
-            this.log('智能交易触发买入', 'info');
-            // 智能交易模式下的买入次数统计
-            this.currentTradeCount++;
-            this.updateTradeCounter();
-            // 直接执行单次买入，不启动持续的交易循环
-            this.executeSmartBuy();
-        } else {
-            // 记录当前信号状态，帮助调试
-            if (recentSignals.length >= 3) {
-                if (!this.canStartBuying) {
-                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 下降信号后等待中，暂不允许买入`, 'info');
-                } else {
-                    this.log(`当前信号状态: [${recentSignals.join(', ')}] - 不满足买入条件`, 'info');
-                }
-            }
-        }
-    }
+        if (!this.isRunning || this.sessionMode !== 'smart') return;
+        if (!this.smartTradingMode) return;
+        if (this.isSmartTradingExecution) return;
 
-    // 停止智能交易
-    stopSmartTrading() {
-        this.log('智能交易模式已禁用', 'info');
-        
-        // 重置智能交易相关状态
-        this.smartTradingMode = false;
-        this.currentTradeCount = 0; // 重置当前次数
-        this.clearCountdown(); // 清除倒计时
-        this.updateTradeCounter(); // 更新显示
-        
-        // 停止趋势分析
-        this.stopTrendAnalysis();
-        
-        // 更新UI
-        this.updateUI();
-        this.updateSmartTradingButton();
-        
-        this.log('智能交易已停止，当前次数已重置，今日统计已保存', 'info');
+        if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
+            this.log(`🛑 智能交易达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
+            this.stopTrading();
+            return;
+        }
+
+        const recentSignals = this.getRecentSignals(3);
+        if (recentSignals.length < 3) return;
+
+        const ratio = this.shouldSmartStart(recentSignals);
+        if (!ratio) return;
+
+        this.buyAmountRatio = ratio;
+        this.log(`智能交易触发买入，比例 ${(ratio * 100).toFixed(0)}% (信号: [${recentSignals.join(', ')}])`, 'info');
+        this.executeSmartBuy();
     }
 
     // 执行智能交易单次买入
     async executeSmartBuy() {
+        if (!this.isRunning || this.sessionMode !== 'smart') return;
+        if (this.isSmartTradingExecution) return;
+
+        this.isSmartTradingExecution = true;
+
         try {
             this.log('🤖 智能交易开始买入', 'info');
-            
-            // 重置强制停止标志，确保智能交易可以正常执行
             this.forceStop = false;
-            
-            // 获取交易金额
+
             let amount = parseFloat(document.getElementById('trade-amount').value);
             if (!amount || amount < 0.1) {
                 this.log('请输入有效金额（≥0.1 USDT）', 'error');
                 return;
             }
-            
-            // 智能交易模式下的金额调整
+
             if (this.buyAmountRatio !== 1.0) {
                 const originalAmount = amount;
                 amount = amount * this.buyAmountRatio;
                 this.log(`智能交易金额调整: ${originalAmount} USDT × ${this.buyAmountRatio} = ${amount} USDT`, 'info');
             }
-            
+
             this.log(`💰 交易金额: ${amount} USDT`, 'info');
             this.log(`🎯 智能交易买入比例: ${(this.buyAmountRatio * 100).toFixed(0)}%`, 'info');
-            
-            // 安全检查
+
             if (!this.performSafetyChecks()) {
                 this.log('安全检查失败，取消买入', 'error');
                 return;
             }
-            
-            // 设置智能交易执行标志
-            this.isSmartTradingExecution = true;
-            
-            // 执行买入操作
+
+            this.currentAmount = amount;
             await this.executeBuy();
-            
-            // 重置智能交易执行标志
-            this.isSmartTradingExecution = false;
-            
-            // 更新每日统计
+
             await this.incrementDailyTradeCount();
-            
+
+            this.currentTradeCount++;
+            this.updateTradeCounter();
             this.log('✅ 智能交易买入完成', 'success');
-            
-            // 智能交易延迟时间检查
+
+            if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
+                this.log(`🛑 已达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
+                this.stopTrading();
+                return;
+            }
+
             const tradeDelay = parseFloat(document.getElementById('config-delay').value) || 2;
-            if (tradeDelay > 0) {
+            if (tradeDelay > 0 && this.isRunning && this.sessionMode === 'smart') {
                 const delayMs = tradeDelay * 1000;
                 this.startCountdown(tradeDelay, '智能交易延迟');
                 await this.sleep(delayMs);
             }
-            
         } catch (error) {
             this.log(`智能交易买入失败: ${error.message}`, 'error');
+        } finally {
             this.isSmartTradingExecution = false;
         }
     }
 
     // 判断是否应该智能开始
-    shouldSmartStart() {
-        // 首先检查是否允许买入（下降信号等待机制）
+    shouldSmartStart(recentSignals) {
         if (!this.canStartBuying) {
-            this.log(`🚫 下降信号后等待中，暂不允许买入`, 'info');
-            return false;
+            return null;
         }
 
-        // 检查最近3个信号（按时间从早到晚）
-        const recentSignals = this.getRecentSignals(3);
-        if (recentSignals.length < 3) {
-            this.log(`信号数据不足，当前只有 ${recentSignals.length} 个信号，需要3个`, 'info');
-            return false;
+        const [first, second, third] = recentSignals;
+
+        // 100%买入条件：[平缓/上涨, 上涨, 上涨]
+        if ((first === 'flat' || first === 'rising') && second === 'rising' && third === 'rising') {
+            return 1.0;
         }
 
-        // 如果智能交易已经在运行，不重复启动
-        if (this.isRunning) {
-            return false;
+        // 50%买入条件：[平缓, 平缓, 平缓/上涨]
+        if (first === 'flat' && second === 'flat' && (third === 'flat' || third === 'rising')) {
+            return 0.5;
         }
 
-        // 100%买入条件
-        // [flat/rising, rising, rising] 或 [flat, flat/rising, rising]
-        if ((recentSignals[0] === 'flat' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising') ||
-            (recentSignals[0] === 'rising' && recentSignals[1] === 'rising' && recentSignals[2] === 'rising')) {
-            this.buyAmountRatio = 1.0;
-            return true;
-        }
-
-        // 50%买入条件
-        // [flat, flat, rising] 或 [flat, flat, flat]
-        if ((recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'rising') ||
-            (recentSignals[0] === 'flat' && recentSignals[1] === 'flat' && recentSignals[2] === 'flat')) {
-            this.buyAmountRatio = 0.5;
-            return true;
-        }
-
-        this.log(`❌ 不满足买入条件: [${recentSignals.join(', ')}]`, 'info');
-        return false;
+        return null;
     }
 
 
@@ -2233,16 +2155,6 @@ class BinanceAutoTrader {
         return arr.map(data => data.trend);
     }
 
-    // 检查所有信号是否都是平缓期
-    allSignalsAreFlat(signals) {
-        return signals.every(signal => signal === 'flat');
-    }
-
-    // 检查是否有2个上升信号
-    hasTwoRisingSignals(signals) {
-        const risingCount = signals.filter(signal => signal === 'rising').length;
-        return risingCount >= 2;
-    }
 }
 
 // 检查是否在币安Alpha交易页面
