@@ -1180,6 +1180,12 @@ class BinanceAutoTrader {
                button.className.includes('deposit');
     }
 
+    isInOrderForm(element) {
+        if (!element) return false;
+        const orderRoot = this.getOrderFormRoot();
+        return !!(orderRoot && orderRoot.contains(element));
+    }
+
     findBuyConfirmButton() {
         this.log('开始查找买入确认按钮...', 'info');
         
@@ -1232,14 +1238,15 @@ class BinanceAutoTrader {
                     const isVisible = this.isVisible(btn);
                     const isDisabled = btn.disabled;
                     const isDeposit = this.isDepositButton(btn);
+                    const inOrderForm = this.isInOrderForm(btn);
                     
-                    this.log(`按钮${i + 1}: 文本="${btnText}", 类名="${btnClass}", 可见=${isVisible}, 禁用=${isDisabled}, 充值=${isDeposit}`, 'info');
+                    this.log(`按钮${i + 1}: 文本="${btnText}", 类名="${btnClass}", 可见=${isVisible}, 禁用=${isDisabled}, 充值=${isDeposit}, 交易面板内=${inOrderForm}`, 'info');
                     
                     // 放宽匹配条件 - 检查更多可能的确认按钮文本
                     const possibleConfirmTexts = ['确认', '继续', '下单', '提交', '买入', 'Confirm', 'Continue', 'Submit'];
                     const isConfirmText = possibleConfirmTexts.some(text => btnText.includes(text));
                     
-                    if (isConfirmText && !isDeposit && !isDisabled && isVisible) {
+                    if (isConfirmText && !isDeposit && !isDisabled && isVisible && !inOrderForm) {
                         this.log(`✅ 找到匹配的确认按钮: "${btnText}"`, 'success');
                         return btn;
                     }
@@ -1253,10 +1260,11 @@ class BinanceAutoTrader {
                     const btnText = btn.textContent?.trim() || '';
                     const isDeposit = this.isDepositButton(btn);
                     const isVisible = this.isVisible(btn);
+                    const inOrderForm = this.isInOrderForm(btn);
                     
-                    this.log(`Primary按钮: 文本="${btnText}", 充值=${isDeposit}, 可见=${isVisible}`, 'info');
+                    this.log(`Primary按钮: 文本="${btnText}", 充值=${isDeposit}, 可见=${isVisible}, 交易面板内=${inOrderForm}`, 'info');
                     
-                    if (!isDeposit && !btn.disabled && isVisible) {
+                    if (!isDeposit && !btn.disabled && isVisible && !inOrderForm) {
                         this.log(`✅ 使用primary按钮: "${btnText}"`, 'info');
                         return btn;
                     }
@@ -1270,8 +1278,8 @@ class BinanceAutoTrader {
         
         for (const text of possibleConfirmTexts) {
             const buttons = Array.from(document.querySelectorAll('button'))
-                .filter(btn => btn.textContent?.trim() === text);
-            
+                .filter(btn => btn.textContent?.trim() === text && !this.isInOrderForm(btn));
+        
             for (const btn of buttons) {
                 if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
                     this.log(`✅ 在页面找到确认按钮: "${text}", 类名: ${btn.className}`, 'success');
@@ -1285,7 +1293,7 @@ class BinanceAutoTrader {
         const primaryButtons = document.querySelectorAll('button.bn-button__primary[class*="w-full"]');
         for (const btn of primaryButtons) {
             const btnText = btn.textContent?.trim() || '';
-            if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn) && btnText) {
+            if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn) && btnText && !this.isInOrderForm(btn)) {
                 this.log(`✅ 使用w-full primary按钮: "${btnText}", 类名: ${btn.className}`, 'info');
                 return btn;
             }
