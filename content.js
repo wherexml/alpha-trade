@@ -179,7 +179,14 @@ class BinanceAutoTrader {
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
                 </div>
                 <div class="smart-trading-control">
-                    <button class="smart-trading-btn" id="smart-trading-btn">智能交易：关闭</button>
+                    <div class="smart-switch-row">
+                        <span class="smart-switch-label">智能交易</span>
+                        <span id="smart-switch-state" class="smart-switch-state">关闭</span>
+                        <label class="smart-switch" for="smart-trading-switch">
+                            <input type="checkbox" id="smart-trading-switch" />
+                            <span class="smart-slider"></span>
+                        </label>
+                    </div>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
@@ -349,7 +356,7 @@ class BinanceAutoTrader {
         const configBtn = document.getElementById('config-btn');
         const configSaveBtn = document.getElementById('config-save-btn');
         const configCancelBtn = document.getElementById('config-cancel-btn');
-        const smartTradingBtn = document.getElementById('smart-trading-btn');
+        const smartTradingSwitch = document.getElementById('smart-trading-switch');
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
@@ -358,7 +365,9 @@ class BinanceAutoTrader {
         configBtn.addEventListener('click', () => this.toggleConfigPanel());
         configSaveBtn.addEventListener('click', () => this.saveConfig());
         configCancelBtn.addEventListener('click', () => this.cancelConfig());
-        smartTradingBtn.addEventListener('click', () => this.toggleSmartTrading());
+        if (smartTradingSwitch) {
+            smartTradingSwitch.addEventListener('change', (e) => this.setSmartTradingMode(!!e.target.checked));
+        }
     }
 
     makeDraggable() {
@@ -1787,7 +1796,7 @@ class BinanceAutoTrader {
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
                 document.getElementById('trade-count').value = this.maxTradeCount;
-                this.updateSmartTradingButton();
+                this.updateSmartTradingSwitch();
                 this.updateTradeCounter();
                 
                 this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms, 智能交易=${this.smartTradingMode}`, 'info');
@@ -1797,14 +1806,16 @@ class BinanceAutoTrader {
         }
     }
 
-    // 切换智能交易模式
-    toggleSmartTrading() {
+    // 显式设置智能交易模式
+    setSmartTradingMode(enabled) {
         if (this.isRunning) {
-            this.log('⚠️ 交易进行中无法切换智能模式，请先停止当前交易', 'warning');
+            this.log('⚠️ Cannot toggle smart mode while running', 'warning');
+            const switchEl = document.getElementById('smart-trading-switch');
+            if (switchEl) switchEl.checked = this.smartTradingMode;
             return;
         }
 
-        this.smartTradingMode = !this.smartTradingMode;
+        this.smartTradingMode = !!enabled;
         if (this.smartTradingMode) {
             this.log('智能交易模式已开启', 'info');
             this.startTrendAnalysis();
@@ -1814,20 +1825,32 @@ class BinanceAutoTrader {
             this.buyAmountRatio = 1.0;
         }
 
-        this.updateSmartTradingButton();
+        this.updateSmartTradingSwitch();
         this.updateUI();
+
+        // Persist
+        this.setStorageData('userConfig', {
+            amount: this.currentAmount,
+            count: this.maxTradeCount,
+            delay: this.tradeDelay,
+            sellDiscountRate: this.sellDiscountRate,
+            smartTradingMode: this.smartTradingMode
+        });
     }
 
-    // 更新智能交易按钮状态
-    updateSmartTradingButton() {
-        const btn = document.getElementById('smart-trading-btn');
-        if (!btn) return;
-        if (this.smartTradingMode) {
-            btn.textContent = '智能交易：开启';
-            btn.classList.add('active');
-        } else {
-            btn.textContent = '智能交易：关闭';
-            btn.classList.remove('active');
+    // 同步开关控件的UI文本与状态
+    updateSmartTradingSwitch() {
+        const switchEl = document.getElementById('smart-trading-switch');
+        const stateEl = document.getElementById('smart-switch-state');
+        if (switchEl) switchEl.checked = !!this.smartTradingMode;
+        if (stateEl) {
+            if (this.smartTradingMode) {
+                stateEl.textContent = '开启';
+                stateEl.classList.add('on');
+            } else {
+                stateEl.textContent = '关闭';
+                stateEl.classList.remove('on');
+            }
         }
     }
 
