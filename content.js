@@ -408,6 +408,9 @@ class BinanceAutoTrader {
                 this.startTrading();
             } else if (message.action === 'stop') {
                 this.stopTrading();
+            } else if (message.action === 'emergency_stop') {
+                // Handle emergency stop from popup
+                this.autoStopAndSellAll();
             }
         });
     }
@@ -518,9 +521,7 @@ class BinanceAutoTrader {
             clearInterval(this.orderCheckInterval);
             this.orderCheckInterval = null;
         }
-        
-        // 重置交易次数计数器
-        this.currentTradeCount = 0;
+        // 保留本次会话的交易次数，便于用户查看已完成次数
         
         this.updateUI();
         this.updateTradeCounter();
@@ -617,6 +618,13 @@ class BinanceAutoTrader {
                 // 检查强制停止标志
                 if (this.forceStop) {
                     this.log('检测到强制停止标志，立即停止交易循环', 'warning');
+                    break;
+                }
+                
+                // 达到买入次数上限的前置检查
+                if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
+                    this.log(`🛑 已达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
+                    this.stopTrading();
                     break;
                 }
                 
@@ -821,7 +829,7 @@ class BinanceAutoTrader {
         this.log('设置买入价格和卖出价格...', 'info');
         
         // 1. 获取建议价格
-        const suggestedPriceText = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
+        let suggestedPriceText = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
         if (!suggestedPriceText) {
             // 备用查找方式
             const priceElements = document.querySelectorAll('div[class*="text-PrimaryText"][class*="cursor-pointer"]');
@@ -1770,7 +1778,7 @@ class BinanceAutoTrader {
             if (userConfig) {
                 this.currentAmount = userConfig.amount || 200;
                 this.maxTradeCount = userConfig.count || 40;
-                this.tradeDelay = userConfig.delay || 100;
+                this.tradeDelay = userConfig.delay || 2;
                 
                 // 加载智能交易配置
                 this.smartTradingMode = userConfig.smartTradingMode || false;
@@ -2079,6 +2087,13 @@ class BinanceAutoTrader {
     async executeSmartBuy() {
         if (!this.isRunning || this.sessionMode !== 'smart') return;
         if (this.isSmartTradingExecution) return;
+        
+        // 达到买入次数上限的冗余保护
+        if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
+            this.log(`🛑 智能交易达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
+            this.stopTrading();
+            return;
+        }
 
         this.isSmartTradingExecution = true;
 
