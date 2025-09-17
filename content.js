@@ -418,7 +418,7 @@ class BinanceAutoTrader {
             } else if (message.action === 'stop') {
                 this.stopTrading();
             } else if (message.action === 'emergency_stop') {
-                // Handle emergency stop from popup
+                // Handle emergency stop triggered via runtime messaging
                 this.autoStopAndSellAll();
             }
         });
