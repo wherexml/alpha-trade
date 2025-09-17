@@ -1093,7 +1093,8 @@ class BinanceAutoTrader {
             await this.sleep(250);
 
         // 查找确认弹窗中的"继续"按钮
-        confirmButton = this.findBuyConfirmButton();
+        // 初次查找允许使用整页后备（保持原有兼容性）
+        confirmButton = this.findBuyConfirmButton({ allowPageFallback: true });
             
             // 如果找到按钮，立即跳出循环
             if (confirmButton) {
@@ -1105,7 +1106,7 @@ class BinanceAutoTrader {
             this.log('发现买入确认弹窗，准备点击确认按钮', 'info');
             
             // 记录点击前弹窗状态（避免递归调用）
-            const beforeClickExists = true; // 既然找到了confirmButton，说明弹窗存在
+            const beforeClickExists = true; // Found confirmButton implies modal existed
             this.log(`点击前弹窗存在: ${beforeClickExists}`, 'info');
             
             // 确保按钮可见和可点击
@@ -1119,11 +1120,10 @@ class BinanceAutoTrader {
                 confirmButton.focus();
                 await this.sleep(100);
                 confirmButton.click();
-                await this.sleep(800); // 等待更长时间观察效果
-                
-                // 检查弹窗是否消失
-                const afterClickModal = this.findBuyConfirmButton();
-                const afterClickExists = afterClickModal !== null;
+                await this.sleep(800); // 等待观察效果
+
+                // 点击后仅在弹窗范围内检查，避免整页按钮造成误判
+                const afterClickExists = this.findBuyConfirmButton({ allowPageFallback: false }) !== null;
                 this.log(`点击后弹窗存在: ${afterClickExists}`, 'info');
                 
                 if (beforeClickExists && !afterClickExists) {
@@ -1153,10 +1153,9 @@ class BinanceAutoTrader {
                     }
                     
                     await this.sleep(800);
-                    
-                    // 再次检查弹窗
-                    const finalModal = this.findBuyConfirmButton();
-                    const finalExists = finalModal !== null;
+
+                    // 再次仅在弹窗范围内检查
+                    const finalExists = this.findBuyConfirmButton({ allowPageFallback: false }) !== null;
                     this.log(`事件点击后弹窗存在: ${finalExists}`, 'info');
                     
                     if (!finalExists) {
@@ -1196,7 +1195,8 @@ class BinanceAutoTrader {
         return !!(orderRoot && orderRoot.contains(element));
     }
 
-    findBuyConfirmButton() {
+    findBuyConfirmButton(options = {}) {
+        const { allowPageFallback = true } = options;
         this.log('开始查找买入确认按钮...', 'info');
         
         // 方法1: 查找可见的弹窗中的确认按钮（最直接有效）
@@ -1282,18 +1282,18 @@ class BinanceAutoTrader {
             }
         }
         
-        // 方法2: 简化页面查找 - 只查找可能的确认按钮文本
-        this.log('在页面中查找确认按钮...', 'info');
-        const possibleConfirmTexts = ['确认', '继续', '下单', '提交'];
-        
-        for (const text of possibleConfirmTexts) {
-            const buttons = Array.from(document.querySelectorAll('button'))
-                .filter(btn => btn.textContent?.trim() === text && !this.isInOrderForm(btn));
-        
-            for (const btn of buttons) {
-                if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
-                    this.log(`✅ 在页面找到确认按钮: "${text}", 类名: ${btn.className}`, 'success');
-                    return btn;
+        // 方法2: 简化页面查找 - 只查找可能的确认按钮文本（可开关）
+        if (allowPageFallback) {
+            this.log('在页面中查找确认按钮...', 'info');
+            const possibleConfirmTexts = ['确认', '继续', '下单', '提交'];
+            for (const text of possibleConfirmTexts) {
+                const buttons = Array.from(document.querySelectorAll('button'))
+                    .filter(btn => btn.textContent?.trim() === text && !this.isInOrderForm(btn));
+                for (const btn of buttons) {
+                    if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
+                        this.log(`✅ 在页面找到确认按钮: "${text}", 类名: ${btn.className}`, 'success');
+                        return btn;
+                    }
                 }
             }
         }
