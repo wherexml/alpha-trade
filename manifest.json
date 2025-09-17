@@ -19,7 +19,6 @@
     }
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "币安Alpha自动买入"
   },
   "web_accessible_resources": [
