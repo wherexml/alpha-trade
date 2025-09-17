@@ -201,10 +201,11 @@ class BinanceAutoTrader {
         this.trendActionEl = trendEl.querySelector('#trend-action');
         this.trendTextEl = trendEl.querySelector('#trend-text');
         
-        // 设置默认位置为左下角
+        // 设置默认位置为左上角（悬浮可拖拽，固定宽高）
         this.ui.style.position = 'fixed';
         this.ui.style.left = '20px';
-        this.ui.style.bottom = '20px';
+        this.ui.style.top = '20px';
+        this.ui.style.bottom = '';
         this.ui.style.zIndex = '9999';
         
         this.logContainer = document.getElementById('log-container');
