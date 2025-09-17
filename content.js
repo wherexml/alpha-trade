@@ -130,7 +130,7 @@ class BinanceAutoTrader {
                 </div>
                 <div class="config-row">
                     <label for="config-delay">延迟时间 (秒):</label>
-                    <input type="number" id="config-delay" step="0.5" min="0.5" value="2">
+                    <input type="number" id="config-delay" step="0.5" min="0" value="2">
                 </div>
                 <div class="config-row">
                     <label for="config-sell-discount">卖出折价率 (%):</label>
@@ -697,9 +697,12 @@ class BinanceAutoTrader {
                 }
                 
                 // 使用配置的延迟时间（秒转毫秒）
-                const delayMs = this.tradeDelay * 1000;
-                this.startCountdown(this.tradeDelay, '买入延迟');
-                await this.sleep(delayMs);
+                const delaySeconds = typeof this.tradeDelay === 'number' ? this.tradeDelay : 0;
+                if (delaySeconds > 0) {
+                    const delayMs = delaySeconds * 1000;
+                    this.startCountdown(delaySeconds, '买入延迟');
+                    await this.sleep(delayMs);
+                }
 
             } catch (error) {
                 consecutiveErrors++;
@@ -1527,6 +1530,10 @@ class BinanceAutoTrader {
     // 倒计时功能
     startCountdown(seconds, message = '倒计时') {
         this.clearCountdown(); // 清除之前的倒计时
+
+        if (!seconds || seconds <= 0) {
+            return;
+        }
         
         let remaining = Math.ceil(seconds);
         this.log(`⏰ ${message}: ${remaining}秒`, 'info');
@@ -1663,7 +1670,7 @@ class BinanceAutoTrader {
         
         configAmount.value = this.currentAmount || 200;
         configCount.value = this.maxTradeCount || 40;
-        configDelay.value = this.tradeDelay || 2;
+        configDelay.value = typeof this.tradeDelay === 'number' ? this.tradeDelay : 2;
         configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
         
         // 添加实时监听
@@ -1704,9 +1711,13 @@ class BinanceAutoTrader {
         if (configDelay) {
             configDelay.addEventListener('input', () => {
                 const value = parseFloat(configDelay.value);
-                if (!isNaN(value) && value >= 0.5) {
+                if (!isNaN(value) && value >= 0) {
                     this.tradeDelay = value;
-                    this.log(`延迟时间已更新为: ${value}秒`, 'info');
+                    if (value === 0) {
+                        this.log('延迟已关闭，将立即执行交易', 'info');
+                    } else {
+                        this.log(`延迟时间已更新为: ${value}秒`, 'info');
+                    }
                 }
             });
         }
@@ -1740,8 +1751,8 @@ class BinanceAutoTrader {
             return;
         }
         
-        if (isNaN(configDelay) || configDelay < 0.5) {
-            this.log('延迟时间必须大于等于0.5秒', 'error');
+        if (isNaN(configDelay) || configDelay < 0) {
+            this.log('延迟时间必须大于等于0秒', 'error');
             return;
         }
         
@@ -1769,7 +1780,7 @@ class BinanceAutoTrader {
             smartTradingMode: this.smartTradingMode
         });
         
-        this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}ms`, 'success');
+        this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}s`, 'success');
         
         // 隐藏配置面板
         document.getElementById('config-panel').style.display = 'none';
@@ -1787,7 +1798,7 @@ class BinanceAutoTrader {
             if (userConfig) {
                 this.currentAmount = userConfig.amount || 200;
                 this.maxTradeCount = userConfig.count || 40;
-                this.tradeDelay = userConfig.delay || 2;
+                this.tradeDelay = typeof userConfig.delay === 'number' ? userConfig.delay : 2;
                 
                 // 加载智能交易配置
                 this.smartTradingMode = userConfig.smartTradingMode || false;
@@ -1799,7 +1810,7 @@ class BinanceAutoTrader {
                 this.updateSmartTradingSwitch();
                 this.updateTradeCounter();
                 
-                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}ms, 智能交易=${this.smartTradingMode}`, 'info');
+                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}s, 智能交易=${this.smartTradingMode}`, 'info');
                     }
                 } catch (error) {
             this.log(`加载用户配置失败: ${error.message}`, 'error');
@@ -1937,7 +1948,7 @@ class BinanceAutoTrader {
             
             // 智能交易模式下，在趋势分析之间添加延迟
             if (this.smartTradingMode && this.isRunning && this.sessionMode === 'smart') {
-                const trendDelay = parseFloat(document.getElementById('config-delay').value) || 2;
+                const trendDelay = typeof this.tradeDelay === 'number' ? this.tradeDelay : 0;
                 if (trendDelay > 0) {
                     const delayMs = trendDelay * 1000;
                     this.startCountdown(trendDelay, '趋势分析延迟');
@@ -2159,7 +2170,7 @@ class BinanceAutoTrader {
                 return;
             }
 
-            const tradeDelay = parseFloat(document.getElementById('config-delay').value) || 2;
+            const tradeDelay = typeof this.tradeDelay === 'number' ? this.tradeDelay : 0;
             if (tradeDelay > 0 && this.isRunning && this.sessionMode === 'smart') {
                 const delayMs = tradeDelay * 1000;
                 this.startCountdown(tradeDelay, '智能交易延迟');
