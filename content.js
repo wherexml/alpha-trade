@@ -121,14 +121,6 @@ class BinanceAutoTrader {
             <div class="config-panel" id="config-panel" style="display: none;">
                 <div class="config-title">配置设置</div>
                 <div class="config-row">
-                    <label for="config-amount">交易金额 (USDT):</label>
-                    <input type="number" id="config-amount" step="0.1" min="0.1" value="200">
-                </div>
-                <div class="config-row">
-                    <label for="config-count">交易次数:</label>
-                    <input type="number" id="config-count" step="1" min="0" value="40">
-                </div>
-                <div class="config-row">
                     <label for="config-delay">延迟时间 (秒):</label>
                     <input type="number" id="config-delay" step="0.5" min="0" value="2">
                 </div>
@@ -1659,13 +1651,9 @@ class BinanceAutoTrader {
 
     // 加载配置到配置面板
     loadConfigToPanel() {
-        const configAmount = document.getElementById('config-amount');
-        const configCount = document.getElementById('config-count');
         const configDelay = document.getElementById('config-delay');
         const configSellDiscount = document.getElementById('config-sell-discount');
         
-        configAmount.value = this.currentAmount || 200;
-        configCount.value = this.maxTradeCount || 40;
         configDelay.value = typeof this.tradeDelay === 'number' ? this.tradeDelay : 2;
         configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
         
@@ -1675,33 +1663,8 @@ class BinanceAutoTrader {
     
     // 添加配置面板实时监听
     addConfigListeners() {
-        const configAmount = document.getElementById('config-amount');
-        const configCount = document.getElementById('config-count');
         const configDelay = document.getElementById('config-delay');
         const configSellDiscount = document.getElementById('config-sell-discount');
-        
-        // 监听交易金额变化
-        if (configAmount) {
-            configAmount.addEventListener('input', () => {
-                const value = parseFloat(configAmount.value);
-                if (!isNaN(value) && value >= 0.1) {
-                    this.currentAmount = value;
-                    this.log(`交易金额已更新为: ${value} USDT`, 'info');
-                }
-            });
-        }
-        
-        // 监听交易次数变化
-        if (configCount) {
-            configCount.addEventListener('input', () => {
-                const value = parseInt(configCount.value);
-                if (!isNaN(value) && value >= 0) {
-                    this.maxTradeCount = value;
-                    this.updateTradeCounter(); // 实时更新显示
-                    this.log(`交易次数限制已更新为: ${value}`, 'info');
-                }
-            });
-        }
         
         // 监听延迟时间变化
         if (configDelay) {
@@ -1732,20 +1695,8 @@ class BinanceAutoTrader {
 
     // 保存配置
     async saveConfig() {
-        const configAmount = parseFloat(document.getElementById('config-amount').value);
-        const configCount = parseInt(document.getElementById('config-count').value);
         const configDelay = parseFloat(document.getElementById('config-delay').value);
         const configSellDiscount = parseFloat(document.getElementById('config-sell-discount').value);
-        
-        if (isNaN(configAmount) || configAmount < 0.1) {
-            this.log('交易金额必须大于等于0.1 USDT', 'error');
-            return;
-        }
-        
-        if (isNaN(configCount) || configCount < 0) {
-            this.log('交易次数必须大于等于0', 'error');
-            return;
-        }
         
         if (isNaN(configDelay) || configDelay < 0) {
             this.log('延迟时间必须大于等于0秒', 'error');
@@ -1757,26 +1708,21 @@ class BinanceAutoTrader {
             return;
         }
         
-        // 更新配置
-        this.currentAmount = configAmount;
-        this.maxTradeCount = configCount;
+        // 更新配置（仅处理延迟与卖出折价率）
         this.tradeDelay = configDelay;
         this.sellDiscountRate = configSellDiscount / 100; // 转换为小数
         
-        // 更新主界面
-        document.getElementById('trade-amount').value = configAmount;
-        document.getElementById('trade-count').value = configCount;
-        
         // 保存到本地存储
         await this.setStorageData('userConfig', {
-            amount: configAmount,
-            count: configCount,
+            // 保留外部输入框的当前值用于持久化
+            amount: this.currentAmount,
+            count: this.maxTradeCount,
             delay: configDelay,
             sellDiscountRate: this.sellDiscountRate,
             smartTradingMode: this.smartTradingMode
         });
         
-        this.log(`配置已保存: 金额=${configAmount}U, 次数=${configCount}, 延迟=${configDelay}s`, 'success');
+        this.log(`配置已保存: 延迟=${configDelay}s, 折价率=${configSellDiscount}%`, 'success');
         
         // 隐藏配置面板
         document.getElementById('config-panel').style.display = 'none';
