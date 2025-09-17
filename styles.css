@@ -152,6 +152,83 @@
     margin-top: 8px;
 }
 
+/* iOS-style smart trading switch */
+#binance-auto-trader .smart-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 0;
+}
+
+#binance-auto-trader .smart-switch-label {
+    font-size: 12px;
+    color: #ccc;
+}
+
+#binance-auto-trader .smart-switch-state {
+    font-size: 12px;
+    color: #888;
+    min-width: 28px;
+    text-align: right;
+}
+
+#binance-auto-trader .smart-switch-state.on {
+    color: #2ebd85;
+}
+
+#binance-auto-trader .smart-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+#binance-auto-trader .smart-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+#binance-auto-trader .smart-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #555;
+    border: 1px solid #444;
+    transition: all 0.2s;
+    border-radius: 999px;
+}
+
+#binance-auto-trader .smart-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 2px;
+    top: 2px;
+    background: #fff;
+    transition: all 0.2s;
+    border-radius: 50%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+
+#binance-auto-trader .smart-switch input:checked + .smart-slider {
+    background: #2ebd85;
+    border-color: #2ebd85;
+}
+
+#binance-auto-trader .smart-switch input:checked + .smart-slider:before {
+    transform: translateX(20px);
+}
+
+#binance-auto-trader .smart-switch input:focus + .smart-slider {
+    box-shadow: 0 0 0 3px rgba(46, 189, 133, 0.35);
+}
+
 #binance-auto-trader .smart-trading-btn {
     width: 100%;
     padding: 8px 12px;
