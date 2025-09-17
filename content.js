@@ -825,7 +825,6 @@ class BinanceAutoTrader {
         
         // 直接点击反向订单复选框
         reverseOrderCheckbox.click();
-        await this.sleep(200);
         
         // 验证是否勾选成功
         const isChecked = reverseOrderCheckbox.getAttribute('aria-checked') === 'true';
@@ -912,7 +911,6 @@ class BinanceAutoTrader {
         sellPriceInput.dispatchEvent(new Event('input', { bubbles: true }));
         sellPriceInput.dispatchEvent(new Event('change', { bubbles: true }));
         
-        await this.sleep(200);
         this.log(`卖出价格设置完成: ${sellPriceFormatted}`, 'success');
     }
 
@@ -982,7 +980,7 @@ class BinanceAutoTrader {
 
     async waitForBuyTabSwitch(maxAttempts = 6) { // 减少重试次数
         for (let i = 0; i < maxAttempts; i++) {
-            await this.sleep(150); // 减少等待时间
+            await this.sleep(10); // 减少等待时间
             
             if (this.isBuyTabActive()) {
                 this.log('买入选项卡切换成功', 'success');
@@ -1045,7 +1043,7 @@ class BinanceAutoTrader {
         totalInput.dispatchEvent(inputEvent);
         totalInput.dispatchEvent(changeEvent);
         
-        await this.sleep(100); // 减少到100ms
+        await this.sleep(10); // 减少到50ms
         this.log(`设置成交额: ${amount} USDT`, 'info');
     }
 
@@ -1079,7 +1077,7 @@ class BinanceAutoTrader {
 
         // 直接点击，移除复杂的safeClick逻辑
         buyButton.click();
-        await this.sleep(300);
+        await this.sleep(10);
         this.log('点击买入按钮', 'success');
 
         // 检查并处理确认弹窗
@@ -1090,7 +1088,7 @@ class BinanceAutoTrader {
         this.log('检查买入确认弹窗...', 'info');
         
         // 等待弹窗出现
-        await this.sleep(300);
+        await this.sleep(100);
         
         // 多次检测弹窗，提高检测成功率
         let confirmButton = null;
@@ -1120,7 +1118,7 @@ class BinanceAutoTrader {
             
             // 确保按钮可见和可点击
             confirmButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await this.sleep(200);
+            await this.sleep(10);
             
             let clickSuccess = false;
             
@@ -1415,7 +1413,6 @@ class BinanceAutoTrader {
         if (currentOrderTab && !currentOrderTab.classList.contains('active')) {
             currentOrderTab.click();
             this.log('切换到当前委托选项卡', 'info');
-            await this.sleep(200); // 减少到200ms
         }
         
         // 确保在限价选项卡
@@ -1428,7 +1425,6 @@ class BinanceAutoTrader {
         if (limitTab && !limitTab.classList.contains('active')) {
             limitTab.click();
             this.log('切换到限价委托选项卡', 'info');
-            await this.sleep(200); // 减少到200ms
         }
     }
 
