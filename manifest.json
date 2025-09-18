@@ -16,6 +16,14 @@
       "js": ["trend.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.binance.com/*/my/orders/alpha/orderhistory*",
+        "https://www.binance.com/my/orders/alpha/orderhistory*"
+      ],
+      "js": ["order-history.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
@@ -23,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["icon.png"],
+      "resources": ["icon.png", "pageHook.js"],
       "matches": ["https://www.binance.com/*"]
     }
   ]
