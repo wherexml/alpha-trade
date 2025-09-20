@@ -437,6 +437,20 @@ class BinanceAutoTrader {
             return;
         }
 
+		// Persist the current inputs as defaults for next session
+		try {
+			await this.setStorageData('userConfig', {
+				amount: amount,
+				count: tradeCount,
+				delay: this.tradeDelay,
+				sellDiscountRate: this.sellDiscountRate,
+				smartTradingMode: this.smartTradingMode
+			});
+			this.log('已保存启动时的金额与次数到本地', 'info');
+		} catch (e) {
+			this.log(`Persist user config failed: ${e.message}`, 'error');
+		}
+
         this.isRunning = true;
         this.sessionMode = isSmartSession ? 'smart' : 'manual';
         this.forceStop = false;
@@ -1713,15 +1727,17 @@ class BinanceAutoTrader {
         this.tradeDelay = configDelay;
         this.sellDiscountRate = configSellDiscount / 100; // 转换为小数
         
-        // 保存到本地存储
-        await this.setStorageData('userConfig', {
-            // 保留外部输入框的当前值用于持久化
-            amount: this.currentAmount,
-            count: this.maxTradeCount,
-            delay: configDelay,
-            sellDiscountRate: this.sellDiscountRate,
-            smartTradingMode: this.smartTradingMode
-        });
+		// Persist only config fields; do not override amount/count here
+		try {
+			const prev = await this.getStorageData('userConfig') || {};
+			await this.setStorageData('userConfig', {
+				...prev,
+				delay: configDelay,
+				sellDiscountRate: this.sellDiscountRate
+			});
+		} catch (e) {
+			this.log(`Persist config failed: ${e.message}`, 'error');
+		}
         
         this.log(`配置已保存: 延迟=${configDelay}s, 折价率=${configSellDiscount}%`, 'success');
         
@@ -1760,8 +1776,8 @@ class BinanceAutoTrader {
         }
     }
 
-    // 显式设置智能交易模式
-    setSmartTradingMode(enabled) {
+	// 显式设置智能交易模式
+	async setSmartTradingMode(enabled) {
         if (this.isRunning) {
             this.log('⚠️ Cannot toggle smart mode while running', 'warning');
             const switchEl = document.getElementById('smart-trading-switch');
@@ -1782,14 +1798,16 @@ class BinanceAutoTrader {
         this.updateSmartTradingSwitch();
         this.updateUI();
 
-        // Persist
-        this.setStorageData('userConfig', {
-            amount: this.currentAmount,
-            count: this.maxTradeCount,
-            delay: this.tradeDelay,
-            sellDiscountRate: this.sellDiscountRate,
-            smartTradingMode: this.smartTradingMode
-        });
+		// Persist only smartTradingMode; keep amount/count unchanged
+		try {
+			const prev = await this.getStorageData('userConfig') || {};
+			await this.setStorageData('userConfig', {
+				...prev,
+				smartTradingMode: this.smartTradingMode
+			});
+		} catch (e) {
+			this.log(`Persist smart mode failed: ${e.message}`, 'error');
+		}
     }
 
     // 同步开关控件的UI文本与状态
