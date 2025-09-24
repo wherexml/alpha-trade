@@ -1,10 +1,16 @@
 // 把 hook 注入页面（content-script 与页面是隔离环境）
 (function inject() {
-    const s = document.createElement("script");
-    s.src = chrome.runtime.getURL("pageHook.js");
-    (document.head || document.documentElement).appendChild(s);
-    s.remove();
-  })();
+    try {
+        const s = document.createElement("script");
+        s.src = chrome.runtime.getURL("pageHook.js");
+        s.setAttribute('data-source', 'binance-alpha-trader');
+        (document.head || document.documentElement).appendChild(s);
+        s.remove();
+        console.log('[Alpha Trader] pageHook.js 注入成功');
+    } catch (error) {
+        console.error('[Alpha Trader] pageHook.js 注入失败:', error);
+    }
+})();
   
   const state = {
     rawOrders: [],        // 原始记录（来自接口或DOM）
@@ -162,11 +168,24 @@
   
   // 监听 pageHook 发来的 API 数据
   window.addEventListener("message", (ev) => {
-    const msg = ev?.data;
-    if (!msg || msg.source !== "BIA" || msg.type !== "api") return;
-    const list = normalizeApiPayload(msg.payload?.data || msg.payload); // 尝试规整出 orders 数组
-    if (Array.isArray(list) && list.length) {
-      mergeOrders(list, "api");
+    try {
+      const msg = ev?.data;
+      // 增强安全检查，确保消息来源可信
+      if (!msg || 
+          msg.source !== "BIA" || 
+          msg.type !== "api" || 
+          msg.userAgent !== 'binance-alpha-trader' ||
+          ev.origin !== window.location.origin) {
+        return;
+      }
+      
+      console.log('[Alpha Trader] 接收到API数据:', msg);
+      const list = normalizeApiPayload(msg.payload?.data || msg.payload);
+      if (Array.isArray(list) && list.length) {
+        mergeOrders(list, "api");
+      }
+    } catch (error) {
+      console.error('[Alpha Trader] 处理API消息失败:', error);
     }
   });
   

@@ -1,9 +1,20 @@
 // 轻量拦截器：把与订单历史相关的 JSON 回包发给 content script
 (function () {
+    // 防止CSP违规，使用安全的消息传递
     const post = (payload) => {
       try {
-        window.postMessage({ source: "BIA", type: "api", payload }, "*");
-      } catch {}
+        // 添加来源标识，避免与其他脚本冲突
+        const message = { 
+          source: "BIA", 
+          type: "api", 
+          payload,
+          timestamp: Date.now(),
+          userAgent: 'binance-alpha-trader'
+        };
+        window.postMessage(message, window.location.origin);
+      } catch (error) {
+        console.error('[Alpha Trader] 消息发送失败:', error);
+      }
     };
   
     // 识别是否疑似 Alpha 订单历史接口（尽量宽松一些）

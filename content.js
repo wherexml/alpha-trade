@@ -64,6 +64,12 @@ class BinanceAutoTrader {
 
         // 当前会话模式：idle、manual、smart
         this.sessionMode = 'idle';
+        // 弹窗确认互斥锁，防止重复点击导致多弹窗
+        this.confirmationInProgress = false;
+        
+        // 弹窗处理状态跟踪
+        this.lastModalProcessTime = 0;
+        this.modalProcessingDelay = 2000; // 弹窗处理后的强制等待时间（毫秒）
         
         // DOM元素缓存
         this.cachedElements = {
@@ -787,11 +793,44 @@ class BinanceAutoTrader {
         }
         await this.setTotalAmount(adjustedAmount);
         
+        // 5.5. 余额不足/充值CTA前置拦截（严格按流程文档）
+        await this.verifySufficientBalanceOrStop();
+
         // 6. 点击买入按钮
         await this.clickBuyButton();
         
         this.log('✅ 买入操作执行完成', 'success');
         this.log('📤 买入订单已提交', 'success');
+    }
+
+    // 在买入按钮点击前，明确检查买入区的主CTA是否为“添加USDT余额/充值/余额不足”等，若是则停止
+    async verifySufficientBalanceOrStop() {
+        try {
+            const root = this.getOrderFormRoot();
+            if (!root) return; // 没有根容器则交由后续校验处理
+
+            // 优先找与买入相关的全宽按钮
+            const ctas = Array.from(root.querySelectorAll('button'))
+                .filter(btn => this.isVisible(btn) && /w-full/.test(btn.className || ''));
+
+            // 最近/最可能的CTA（一般结构中买入/充值按钮是最靠近成交额区域的全宽按钮）
+            const primaryCTA = ctas[0] || null;
+            if (!primaryCTA) return;
+
+            const text = (primaryCTA.textContent || '').trim();
+            const isDepositLike = ['添加USDT余额', '充值', 'Add USDT', 'Add balance', 'Add funds', 'Top up', 'Deposit', '余额不足', 'Insufficient'].some(k => text.includes(k));
+
+            if (isDepositLike) {
+                this.log(`余额不足检测到充值CTA: "${text}"，已停止本次操作（不点击充值）`, 'error');
+                // 按流程要求：显示日志“余额不足，不要点击”，并停止
+                this.log('余额不足，不要点击', 'error');
+                throw new Error('余额不足：检测到充值CTA，终止本次买入');
+            }
+        } catch (e) {
+            if (e && e.message && e.message.includes('余额不足')) throw e;
+            // 其他异常不阻断后续流程，但记录日志供排查
+            this.log(`余额检查异常（忽略继续）: ${e.message || e}`, 'warning');
+        }
     }
 
 
@@ -1055,16 +1094,38 @@ class BinanceAutoTrader {
     }
 
     async clickBuyButton() {
+        // 检查弹窗处理时序
+        const timeSinceLastModal = Date.now() - this.lastModalProcessTime;
+        if (timeSinceLastModal < this.modalProcessingDelay) {
+            const waitTime = this.modalProcessingDelay - timeSinceLastModal;
+            this.log(`⏳ 距离上次弹窗处理太近，等待 ${waitTime}ms`, 'info');
+            await this.sleep(waitTime);
+        }
+
+        if (this.confirmationInProgress) {
+            this.log('⚠️ 确认操作正在进行中，跳过重复点击', 'warning');
+            throw new Error('确认操作正在进行中，避免重复点击');
+        }
+
+        // 检查当前USDT余额是否足够（提前检查，避免无效操作）
+        const hasEnoughBalance = await this.checkUSDTBalance();
+        if (!hasEnoughBalance) {
+            this.log('⚠️ USDT余额不足，停止交易避免触发充值', 'error');
+            throw new Error('USDT余额不足，已停止交易');
+        }
+
         // 使用精确选择器查找买入按钮
-        let buyButton = this.getCachedElement('buyButton', 'button.bn-button.bn-button__buy');
+        let buyButton = this.getCachedElement('buyButton', 'button.bn-button.bn-button__buy.w-full');
         
         if (!buyButton) {
-            // 直接查找买入按钮，排除充值按钮
-            buyButton = document.querySelector('button.bn-button.bn-button__buy') ||
+            // 根据Buy_Process.md，买入按钮的精确选择器
+            buyButton = document.querySelector('button.bn-button.bn-button__buy.data-size-middle.w-full') ||
+                       document.querySelector('button.bn-button.bn-button__buy.w-full') ||
                        Array.from(document.querySelectorAll('button.bn-button.bn-button__buy')).find(btn => 
                            btn.textContent.includes('买入') && 
                            !btn.textContent.includes('充值') && 
-                           !btn.disabled
+                           !btn.disabled &&
+                           btn.classList.contains('w-full')
                        );
             this.cachedElements.buyButton = buyButton;
         }
@@ -1074,7 +1135,9 @@ class BinanceAutoTrader {
         }
 
         // 额外验证：确保不是充值按钮
-        if (buyButton.textContent.includes('充值') || buyButton.classList.contains('deposit-btn')) {
+        const buttonText = buyButton.textContent || '';
+        if (buttonText.includes('充值') || buttonText.includes('添加USDT') || buyButton.classList.contains('deposit-btn')) {
+            this.log(`❌ 检测到充值相关按钮: "${buttonText}"`, 'error');
             throw new Error('检测到充值按钮，跳过点击');
         }
 
@@ -1082,34 +1145,73 @@ class BinanceAutoTrader {
             throw new Error('买入按钮不可用');
         }
 
-        // 直接点击，移除复杂的safeClick逻辑
-        buyButton.click();
-        await this.sleep(10);
-        this.log('点击买入按钮', 'success');
+        // 再次检查是否有未处理的弹窗（双重保险）
+        const existingModals = this.getVisibleModals ? this.getVisibleModals() : [];
+        if (existingModals.length > 0) {
+            this.log(`⚠️ 发现 ${existingModals.length} 个未处理的弹窗，先处理后再下单`, 'warning');
+            await this.handleExistingModals(existingModals);
+        }
 
-        // 检查并处理确认弹窗
-        await this.handleBuyConfirmationDialog();
+        // 设置确认互斥锁，防止在确认完成前再次点击买入
+        this.confirmationInProgress = true;
+
+        try {
+            // 直接点击
+            this.log(`点击买入按钮: "${buttonText}"`, 'info');
+            buyButton.click();
+            await this.sleep(200); // 增加等待时间，确保弹窗完全加载
+            this.log('买入按钮点击完成，等待确认弹窗...', 'success');
+
+            // 检查并处理确认弹窗
+            await this.handleBuyConfirmationDialog({ allowPageFallback: true, requireResolve: true, timeoutMs: 15000 });
+            
+            // 记录弹窗处理完成时间
+            this.lastModalProcessTime = Date.now();
+            
+        } finally {
+            this.confirmationInProgress = false;
+        }
     }
 
-    async handleBuyConfirmationDialog() {
+    async handleBuyConfirmationDialog(options = {}) {
+        const { allowPageFallback = true, requireResolve = false, timeoutMs = 10000 } = options;
         this.log('检查买入确认弹窗...', 'info');
         
         // 等待弹窗出现
-        await this.sleep(100);
+        await this.sleep(120);
         
         // 多次检测弹窗，提高检测成功率
         let confirmButton = null;
         let attempts = 0;
-        const maxAttempts = 8; // 增加尝试次数
+        const maxAttempts = Math.max(6, Math.floor(timeoutMs / 250));
         
         while (attempts < maxAttempts && !confirmButton) {
-                attempts++;
-                this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
+            attempts++;
+            this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
             await this.sleep(250);
 
-        // 查找确认弹窗中的"继续"按钮
-        // 初次查找允许使用整页后备（保持原有兼容性）
-        confirmButton = this.findBuyConfirmButton({ allowPageFallback: true });
+            // 检查是否存在多个弹窗（重复弹窗问题）
+            const visibleModals = this.getVisibleModals ? this.getVisibleModals() : [];
+            if (visibleModals.length > 1) {
+                this.log(`⚠️ 检测到${visibleModals.length}个弹窗，可能存在重复弹窗`, 'warning');
+                // 关闭多余的弹窗
+                await this.closeExtraModals(visibleModals);
+            }
+
+            // 若检测到充值/余额不足类弹窗，立即停止并返回失败
+            if (visibleModals.length > 0) {
+                const topModal = visibleModals[0];
+                if (topModal && this.isDepositModalText && this.isDepositModalText(topModal.text)) {
+                    this.log('检测到充值/余额不足弹窗，安全停止，避免误点充值', 'error');
+                    this.log(`弹窗内容: ${topModal.text.substring(0, 100)}...`, 'error');
+                    // 尝试关闭充值弹窗
+                    await this.closeDepositModal(topModal.el);
+                    throw new Error('余额不足或充值弹窗出现，已停止当前交易');
+                }
+            }
+
+            // 查找确认弹窗中的按钮
+            confirmButton = this.findBuyConfirmButton({ allowPageFallback });
             
             // 如果找到按钮，立即跳出循环
             if (confirmButton) {
@@ -1190,18 +1292,81 @@ class BinanceAutoTrader {
                 throw new Error('确认弹窗无法关闭，停止交易避免重复操作');
             }
         } else {
+            if (requireResolve) {
+                const stillHasModal = this.hasVisibleModal && this.hasVisibleModal();
+                if (stillHasModal) {
+                    throw new Error('存在未识别的弹窗，已阻止重复下单');
+                }
+            }
             this.log('未发现买入确认弹窗，继续执行', 'info');
+        }
+    }
+
+    // 检查USDT余额是否足够 - 根据Buy_Process.md优化
+    async checkUSDTBalance() {
+        try {
+            // 方法1: 直接检查买入按钮是否变成了"添加USDT余额"按钮（最关键的检测）
+            const primaryButtons = document.querySelectorAll('button.bn-button.bn-button__primary.w-full');
+            for (const button of primaryButtons) {
+                const buttonText = (button.textContent || '').trim();
+                if (buttonText === '添加USDT余额' || buttonText.includes('添加USDT') || buttonText.includes('充值')) {
+                    this.log(`❌ 检测到充值按钮: "${buttonText}"，余额不足`, 'error');
+                    return false;
+                }
+            }
+
+            // 方法2: 检查正常的买入按钮是否存在且可用
+            const buyButtons = document.querySelectorAll('button.bn-button.bn-button__buy.w-full');
+            let hasFunctionalBuyButton = false;
+            for (const button of buyButtons) {
+                const buttonText = (button.textContent || '').trim();
+                if (buttonText.includes('买入') && !button.disabled && !buttonText.includes('充值')) {
+                    hasFunctionalBuyButton = true;
+                    this.log(`✅ 找到正常买入按钮: "${buttonText}"`, 'info');
+                    break;
+                }
+            }
+
+            if (!hasFunctionalBuyButton) {
+                this.log('❌ 未找到可用的买入按钮，可能余额不足', 'warning');
+                return false;
+            }
+
+            // 方法3: 检查成交额输入框附近是否有余额不足提示
+            const totalInput = document.querySelector('#limitTotal');
+            if (totalInput) {
+                const parent = totalInput.closest('.bn-textField') || totalInput.parentElement;
+                const siblingElements = parent ? Array.from(parent.parentElement.children) : [];
+                for (const sibling of siblingElements) {
+                    const text = sibling.textContent || '';
+                    if (text.includes('余额不足') || text.includes('Insufficient')) {
+                        this.log('❌ 成交额输入框附近发现余额不足提示', 'warning');
+                        return false;
+                    }
+                }
+            }
+
+            this.log('✅ 余额检查通过', 'success');
+            return true;
+        } catch (error) {
+            this.log(`检查USDT余额失败: ${error.message}`, 'error');
+            return true; // 出错时假设足够，避免误判
         }
     }
 
     // 检查是否为充值按钮
     isDepositButton(button) {
         if (!button) return false;
-        
-        return button.classList.contains('deposit-btn') || 
-               button.textContent.includes('充值') ||
-               button.querySelector('.deposit-icon') ||
-               button.className.includes('deposit');
+        const text = (button.textContent || '').trim();
+        const cls = button.className || '';
+        const isDepositKeyword = [
+            '充值', '存入', '划转', 'Add USDT', 'Add balance', 'Add funds', 'Top up', 'Deposit',
+            '添加USDT余额', 'USDT余额', '余额不足', 'Insufficient', 'Insufficient balance', 'Buy USDT'
+        ].some(k => text.includes(k));
+        return button.classList.contains('deposit-btn') ||
+               !!button.querySelector?.('.deposit-icon') ||
+               cls.includes('deposit') ||
+               isDepositKeyword;
     }
 
     isInOrderForm(element) {
@@ -1210,117 +1375,407 @@ class BinanceAutoTrader {
         return !!(orderRoot && orderRoot.contains(element));
     }
 
+    hasVisibleModal() {
+        const modals = this.getVisibleModals?.() || [];
+        return modals.length > 0;
+    }
+
+    getVisibleModals() {
+        const modalSelectors = [
+            '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]', 
+            '[style*="position: fixed"]', '[style*="position: absolute"]',
+            'div[class*="bn-"]', '[role="dialog"]',
+            '[class*="overlay"]', '[class*="backdrop"]', '[class*="mask"]',
+            '[class*="confirm"]', '[class*="alert"]', '[class*="notice"]',
+            'div[style*="z-index"]', '[class*="bn-modal"]', '[class*="bn-dialog"]'
+        ];
+        const visible = [];
+        for (const selector of modalSelectors) {
+            const els = document.querySelectorAll(selector);
+            for (const el of els) {
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.offsetWidth > 50 && el.offsetHeight > 50) {
+                    const zi = parseInt(style.zIndex || '0', 10) || 0;
+                    visible.push({ el, z: zi, text: (el.textContent || '').trim() });
+                }
+            }
+        }
+        // 去重并按z-index降序
+        const uniq = [];
+        const seen = new Set();
+        for (const m of visible.sort((a,b)=>b.z-a.z)) {
+            if (!seen.has(m.el)) { seen.add(m.el); uniq.push(m); }
+        }
+        return uniq;
+    }
+
+    isDepositModalText(text) {
+        if (!text) return false;
+        const keys = ['充值', '存入', '划转', 'Add USDT', 'Add funds', 'Add balance', 'Top up', 'Deposit', '余额不足', '添加USDT余额', 'Insufficient balance', '添加USDT', 'USDT余额'];
+        return keys.some(k => text.includes(k));
+    }
+
+    // 关闭多余的弹窗
+    async closeExtraModals(modals) {
+        if (modals.length <= 1) return;
+        
+        this.log(`开始关闭${modals.length - 1}个多余弹窗`, 'info');
+        
+        // 保留z-index最高的弹窗，关闭其他的
+        const sortedModals = modals.sort((a, b) => b.z - a.z);
+        const modalsToClose = sortedModals.slice(1); // 除了第一个（z-index最高的）
+        
+        for (let i = 0; i < modalsToClose.length; i++) {
+            const modal = modalsToClose[i];
+            try {
+                await this.closeModalByElement(modal.el);
+                this.log(`已关闭多余弹窗 ${i + 1}/${modalsToClose.length}`, 'info');
+            } catch (error) {
+                this.log(`关闭多余弹窗失败: ${error.message}`, 'warning');
+            }
+        }
+    }
+
+    // 关闭充值弹窗
+    async closeDepositModal(modalElement) {
+        this.log('尝试关闭充值弹窗', 'info');
+        await this.closeModalByElement(modalElement);
+    }
+
+    // 处理现有弹窗
+    async handleExistingModals(modals) {
+        this.log(`开始处理 ${modals.length} 个现有弹窗`, 'info');
+        
+        for (let i = 0; i < modals.length; i++) {
+            const modal = modals[i];
+            const modalText = modal.text || '';
+            
+            // 检查是否是交易确认弹窗
+            if (this.isTradeConfirmModalText && this.isTradeConfirmModalText(modalText)) {
+                this.log(`处理交易确认弹窗 ${i + 1}/${modals.length}`, 'info');
+                // 尝试点击确认按钮
+                const confirmBtn = this.findBuyConfirmButton({ allowPageFallback: false });
+                if (confirmBtn) {
+                    confirmBtn.click();
+                    await this.sleep(500);
+                    continue;
+                }
+            }
+            
+            // 检查是否是充值弹窗
+            if (this.isDepositModalText && this.isDepositModalText(modalText)) {
+                this.log(`关闭充值弹窗 ${i + 1}/${modals.length}`, 'warning');
+                await this.closeModalByElement(modal.el);
+                continue;
+            }
+            
+            // 其他弹窗，尝试关闭
+            this.log(`关闭其他弹窗 ${i + 1}/${modals.length}`, 'info');
+            await this.closeModalByElement(modal.el);
+        }
+    }
+
+    // 通用关闭弹窗方法
+    async closeModalByElement(modalElement) {
+        if (!modalElement) return;
+        
+        // 方法1: 查找关闭按钮 (×, 取消, 关闭等)
+        const closeButtons = modalElement.querySelectorAll('button, [role="button"]');
+        for (const btn of closeButtons) {
+            const btnText = (btn.textContent || '').trim();
+            const btnClass = btn.className || '';
+            
+            // 检查是否是关闭按钮
+            if (btnText.match(/^[×xX]$/) || 
+                btnText.includes('取消') || 
+                btnText.includes('关闭') || 
+                btnText.includes('Cancel') || 
+                btnText.includes('Close') ||
+                btnClass.includes('close') ||
+                btnClass.includes('cancel')) {
+                
+                this.log(`点击关闭按钮: "${btnText}"`, 'info');
+                btn.click();
+                await this.sleep(200);
+                return;
+            }
+        }
+        
+        // 方法2: 查找遮罩层点击关闭
+        const backdrop = modalElement.querySelector('.bn-mask, [class*="backdrop"], [class*="overlay"]');
+        if (backdrop) {
+            this.log('点击遮罩层关闭弹窗', 'info');
+            backdrop.click();
+            await this.sleep(200);
+            return;
+        }
+        
+        // 方法3: ESC键关闭
+        this.log('尝试ESC键关闭弹窗', 'info');
+        const escEvent = new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            bubbles: true,
+            cancelable: true
+        });
+        document.dispatchEvent(escEvent);
+        await this.sleep(200);
+    }
+
+    isTradeConfirmModalText(text) {
+        if (!text) return false;
+        const mustHave = ['类型', '限价', '买入', '成交额'];
+        const mentions = mustHave.filter(k => text.includes(k)).length;
+        return mentions >= 2 && !this.isDepositModalText(text);
+    }
+
+    // 调试方法：分析页面中所有可能的弹窗元素
+    debugAllModalElements() {
+        this.log('=== 开始分析页面中的所有弹窗元素 ===', 'info');
+        
+        // 查找所有可能包含弹窗的元素
+        const allPossibleModals = document.querySelectorAll('*');
+        const modalCandidates = [];
+        
+        for (const el of allPossibleModals) {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            
+            // 检查是否可能是弹窗
+            const isPossibleModal = (
+                // 位置检查
+                (style.position === 'fixed' || style.position === 'absolute') &&
+                // 尺寸检查
+                rect.width > 100 && rect.height > 100 &&
+                // 可见性检查
+                style.display !== 'none' && 
+                style.visibility !== 'hidden' && 
+                style.opacity !== '0' &&
+                // 内容检查
+                el.textContent && el.textContent.length > 10
+            );
+            
+            if (isPossibleModal) {
+                modalCandidates.push({
+                    element: el,
+                    tagName: el.tagName,
+                    className: el.className,
+                    id: el.id,
+                    textContent: el.textContent.substring(0, 100) + '...',
+                    style: {
+                        position: style.position,
+                        zIndex: style.zIndex,
+                        display: style.display,
+                        visibility: style.visibility,
+                        opacity: style.opacity
+                    },
+                    rect: {
+                        width: rect.width,
+                        height: rect.height,
+                        top: rect.top,
+                        left: rect.left
+                    }
+                });
+            }
+        }
+        
+        this.log(`找到 ${modalCandidates.length} 个可能的弹窗候选元素`, 'info');
+        
+        // 输出前5个最可能的弹窗
+        modalCandidates.slice(0, 5).forEach((modal, index) => {
+            this.log(`弹窗候选${index + 1}:`, 'info');
+            this.log(`  标签: ${modal.tagName}`, 'info');
+            this.log(`  类名: ${modal.className}`, 'info');
+            this.log(`  ID: ${modal.id}`, 'info');
+            this.log(`  位置: ${modal.style.position}, z-index: ${modal.style.zIndex}`, 'info');
+            this.log(`  尺寸: ${modal.rect.width}x${modal.rect.height}`, 'info');
+            this.log(`  内容: ${modal.textContent}`, 'info');
+            
+            // 检查是否包含确认按钮
+            const buttons = modal.element.querySelectorAll('button');
+            this.log(`  包含按钮数量: ${buttons.length}`, 'info');
+            
+            buttons.forEach((btn, btnIndex) => {
+                const btnText = btn.textContent?.trim() || '';
+                const btnClass = btn.className || '';
+                this.log(`    按钮${btnIndex + 1}: "${btnText}" (${btnClass})`, 'info');
+            });
+        });
+        
+        this.log('=== 弹窗元素分析完成 ===', 'info');
+    }
+
+    // 增强的确认按钮查找方法
+    findEnhancedConfirmButton() {
+        this.log('开始增强的确认按钮查找...', 'info');
+        
+        // 查找所有按钮
+        const allButtons = document.querySelectorAll('button');
+        this.log(`页面中共找到 ${allButtons.length} 个按钮`, 'info');
+        
+        const confirmCandidates = [];
+        
+        for (const btn of allButtons) {
+            const btnText = btn.textContent?.trim() || '';
+            const btnClass = btn.className || '';
+            const isVisible = this.isVisible(btn);
+            const isDisabled = btn.disabled;
+            const isDeposit = this.isDepositButton(btn);
+            const inOrderForm = this.isInOrderForm(btn);
+            
+            // 检查是否可能是确认按钮
+            const possibleConfirmTexts = [
+                '确认', '继续', '下单', '提交', '买入', 'Confirm', 'Continue', 'Submit', 'Buy',
+                '确定', 'OK', '是', 'Yes', '同意', 'Agree', '接受', 'Accept'
+            ];
+            
+            const isConfirmText = possibleConfirmTexts.some(text => btnText.includes(text));
+            
+            // 检查按钮样式是否像确认按钮
+            const isConfirmStyle = (
+                btnClass.includes('primary') || 
+                btnClass.includes('confirm') || 
+                btnClass.includes('submit') ||
+                btnClass.includes('bn-button__primary') ||
+                btnClass.includes('w-full')
+            );
+            
+            if (isConfirmText || isConfirmStyle) {
+                confirmCandidates.push({
+                    element: btn,
+                    text: btnText,
+                    className: btnClass,
+                    isVisible: isVisible,
+                    isDisabled: isDisabled,
+                    isDeposit: isDeposit,
+                    inOrderForm: inOrderForm,
+                    isConfirmText: isConfirmText,
+                    isConfirmStyle: isConfirmStyle
+                });
+            }
+        }
+        
+        this.log(`找到 ${confirmCandidates.length} 个可能的确认按钮候选`, 'info');
+        
+        // 按优先级排序并选择最佳候选
+        const sortedCandidates = confirmCandidates.sort((a, b) => {
+            // 优先级：可见 > 非禁用 > 非充值 > 非交易面板内 > 确认文本 > 确认样式
+            let scoreA = 0;
+            let scoreB = 0;
+            
+            if (a.isVisible && !a.isDisabled && !a.isDeposit && !a.inOrderForm) scoreA += 100;
+            if (b.isVisible && !b.isDisabled && !b.isDeposit && !b.inOrderForm) scoreB += 100;
+            
+            if (a.isConfirmText) scoreA += 50;
+            if (b.isConfirmText) scoreB += 50;
+            
+            if (a.isConfirmStyle) scoreA += 25;
+            if (b.isConfirmStyle) scoreB += 25;
+            
+            return scoreB - scoreA;
+        });
+        
+        // 输出前3个最佳候选
+        sortedCandidates.slice(0, 3).forEach((candidate, index) => {
+            this.log(`确认按钮候选${index + 1}:`, 'info');
+            this.log(`  文本: "${candidate.text}"`, 'info');
+            this.log(`  类名: ${candidate.className}`, 'info');
+            this.log(`  可见: ${candidate.isVisible}, 禁用: ${candidate.isDisabled}`, 'info');
+            this.log(`  充值: ${candidate.isDeposit}, 交易面板内: ${candidate.inOrderForm}`, 'info');
+            this.log(`  确认文本: ${candidate.isConfirmText}, 确认样式: ${candidate.isConfirmStyle}`, 'info');
+        });
+        
+        // 返回最佳候选
+        const bestCandidate = sortedCandidates.find(candidate => 
+            candidate.isVisible && 
+            !candidate.isDisabled && 
+            !candidate.isDeposit && 
+            !candidate.inOrderForm
+        );
+        
+        if (bestCandidate) {
+            this.log(`✅ 选择最佳确认按钮: "${bestCandidate.text}"`, 'success');
+            return bestCandidate.element;
+        }
+        
+        this.log('未找到合适的确认按钮候选', 'warning');
+        return null;
+    }
+
     findBuyConfirmButton(options = {}) {
         const { allowPageFallback = true } = options;
         this.log('开始查找买入确认按钮...', 'info');
         
-        // 方法1: 查找可见的弹窗中的确认按钮（最直接有效）
-        const modalSelectors = [
-            '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]', 
-            '[style*="position: fixed"]', '[style*="position: absolute"]',
-            'div[class*="bn-"]', '[role="dialog"]'
-        ];
-        
-        const visibleModals = [];
-        for (const selector of modalSelectors) {
-            const elements = document.querySelectorAll(selector);
-            for (const el of elements) {
-                const style = window.getComputedStyle(el);
-                if (style.display !== 'none' && 
-                    style.visibility !== 'hidden' && 
-                    style.opacity !== '0' &&
-                    el.offsetWidth > 100 &&  // 确保是实际的弹窗
-                    el.offsetHeight > 100) {
-                    visibleModals.push(el);
-                }
+        // 方法1: 根据Buy_Process.md，使用精确的确认按钮选择器
+        // 文档中的确认按钮：<button class="bn-button bn-button__primary data-size-middle w-full mt-[16px] h-[48px]">确认</button>
+        const exactConfirmButtons = document.querySelectorAll('button.bn-button.bn-button__primary.w-full[class*="mt-"]');
+        for (const btn of exactConfirmButtons) {
+            const btnText = (btn.textContent || '').trim();
+            if (btnText === '确认' && this.isVisible(btn) && !btn.disabled) {
+                this.log(`✅ 找到精确匹配的确认按钮: "${btnText}"`, 'success');
+                return btn;
             }
         }
+
+        // 方法2: 使用可见弹窗集合（按z-index排序）
+        const visible = this.getVisibleModals ? this.getVisibleModals() : [];
+        this.log(`找到 ${visible.length} 个可能的弹窗元素`, 'info');
         
-        for (const modal of visibleModals) {
+        for (const { el: modal } of visible) {
             const modalText = modal.textContent || '';
             
-            // 确保是交易确认弹窗，不是充值弹窗
-            const hasTradeInfo = modalText.includes('HEMI') || 
-                               modalText.includes('USDT') || 
-                               modalText.includes('限价') || 
-                               modalText.includes('买入') || 
-                               modalText.includes('成交额') ||
-                               modalText.includes('数量');
+            // 确保是交易确认弹窗，检查关键特征
+            const hasTradeInfo = modalText.includes('限价') && modalText.includes('买入') && modalText.includes('成交额');
+            const hasReverseOrder = modalText.includes('反向订单');
             
-            const hasDepositInfo = modalText.includes('充值') || modalText.includes('deposit');
-            
-            if (hasTradeInfo && !hasDepositInfo && modalText.length > 100) {
+            if (hasTradeInfo && modalText.length > 100) {
                 this.log(`发现交易确认弹窗，内容长度: ${modalText.length}`, 'info');
                 
-                // 输出弹窗中所有按钮的详细信息用于调试
-                const allButtons = modal.querySelectorAll('button');
-                this.log(`弹窗中共找到 ${allButtons.length} 个按钮:`, 'info');
+                // 在弹窗内查找确认按钮 - 使用更精确的选择器
+                const confirmButtons = modal.querySelectorAll('button.bn-button.bn-button__primary.w-full');
+                this.log(`弹窗中找到 ${confirmButtons.length} 个primary按钮`, 'info');
                 
-                for (let i = 0; i < allButtons.length; i++) {
-                    const btn = allButtons[i];
-                    const btnText = btn.textContent?.trim() || '';
+                for (const btn of confirmButtons) {
+                    const btnText = (btn.textContent || '').trim();
                     const btnClass = btn.className || '';
-                    const isVisible = this.isVisible(btn);
-                    const isDisabled = btn.disabled;
-                    const isDeposit = this.isDepositButton(btn);
-                    const inOrderForm = this.isInOrderForm(btn);
                     
-                    this.log(`按钮${i + 1}: 文本="${btnText}", 类名="${btnClass}", 可见=${isVisible}, 禁用=${isDisabled}, 充值=${isDeposit}, 交易面板内=${inOrderForm}`, 'info');
+                    // 检查按钮高度和边距特征（根据文档：mt-[16px] h-[48px]）
+                    const hasCorrectHeight = btnClass.includes('h-[48px]') || btn.style.height === '48px';
+                    const hasCorrectMargin = btnClass.includes('mt-[16px]') || btnClass.includes('mt-');
                     
-                    // 放宽匹配条件 - 检查更多可能的确认按钮文本
-                    const possibleConfirmTexts = ['确认', '继续', '下单', '提交', '买入', 'Confirm', 'Continue', 'Submit'];
-                    const isConfirmText = possibleConfirmTexts.some(text => btnText.includes(text));
+                    this.log(`按钮检查: 文本="${btnText}", 高度特征=${hasCorrectHeight}, 边距特征=${hasCorrectMargin}`, 'info');
                     
-                    if (isConfirmText && !isDeposit && !isDisabled && isVisible && !inOrderForm) {
-                        this.log(`✅ 找到匹配的确认按钮: "${btnText}"`, 'success');
+                    if (btnText === '确认' && this.isVisible(btn) && !btn.disabled) {
+                        this.log(`✅ 找到弹窗内确认按钮: "${btnText}"`, 'success');
                         return btn;
                     }
                 }
                 
-                // 如果没找到文本匹配的，查找primary按钮
-                const primaryButtons = modal.querySelectorAll('button[class*="primary"]');
-                this.log(`查找primary按钮，共找到 ${primaryButtons.length} 个`, 'info');
-                
-                for (const btn of primaryButtons) {
-                    const btnText = btn.textContent?.trim() || '';
-                    const isDeposit = this.isDepositButton(btn);
-                    const isVisible = this.isVisible(btn);
-                    const inOrderForm = this.isInOrderForm(btn);
-                    
-                    this.log(`Primary按钮: 文本="${btnText}", 充值=${isDeposit}, 可见=${isVisible}, 交易面板内=${inOrderForm}`, 'info');
-                    
-                    if (!isDeposit && !btn.disabled && isVisible && !inOrderForm) {
-                        this.log(`✅ 使用primary按钮: "${btnText}"`, 'info');
+                // 如果没找到"确认"文本，查找符合样式特征的按钮
+                for (const btn of confirmButtons) {
+                    const btnText = (btn.textContent || '').trim();
+                    if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn) && btnText) {
+                        this.log(`✅ 使用弹窗内primary按钮: "${btnText}"`, 'info');
                         return btn;
                     }
                 }
             }
         }
         
-        // 方法2: 简化页面查找 - 只查找可能的确认按钮文本（可开关）
+        // 方法3: 页面级别查找（作为备用）
         if (allowPageFallback) {
             this.log('在页面中查找确认按钮...', 'info');
-            const possibleConfirmTexts = ['确认', '继续', '下单', '提交'];
-            for (const text of possibleConfirmTexts) {
-                const buttons = Array.from(document.querySelectorAll('button'))
-                    .filter(btn => btn.textContent?.trim() === text && !this.isInOrderForm(btn));
-                for (const btn of buttons) {
-                    if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
-                        this.log(`✅ 在页面找到确认按钮: "${text}", 类名: ${btn.className}`, 'success');
-                        return btn;
-                    }
+            
+            // 查找所有"确认"按钮
+            const confirmButtons = Array.from(document.querySelectorAll('button'))
+                .filter(btn => (btn.textContent || '').trim() === '确认');
+                
+            for (const btn of confirmButtons) {
+                if (!this.isInOrderForm(btn) && !this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn)) {
+                    this.log(`✅ 在页面找到确认按钮: 类名=${btn.className}`, 'success');
+                    return btn;
                 }
-            }
-        }
-        
-        // 方法3: 最后尝试w-full的primary按钮
-        this.log('查找w-full primary按钮...', 'info');
-        const primaryButtons = document.querySelectorAll('button.bn-button__primary[class*="w-full"]');
-        for (const btn of primaryButtons) {
-            const btnText = btn.textContent?.trim() || '';
-            if (!this.isDepositButton(btn) && !btn.disabled && this.isVisible(btn) && btnText && !this.isInOrderForm(btn)) {
-                this.log(`✅ 使用w-full primary按钮: "${btnText}", 类名: ${btn.className}`, 'info');
-                return btn;
             }
         }
         
