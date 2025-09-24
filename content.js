@@ -777,15 +777,18 @@ class BinanceAutoTrader {
         // 2. 勾选反向订单
         await this.checkReverseOrder();
         
-        // 3. 设置卖出价格（建议价格下浮1%）
+        // 3. 设置买入价格和卖出价格（从成交价格计算）
         await this.setSellPrice();
         
-        // 5. 设置成交额（带安全缓冲，避免实际撮合金额略高于目标）
+        // 4. 设置成交额（带安全缓冲，避免实际撮合金额略高于目标）
         const adjustedAmount = this.getAdjustedBuyAmount(this.currentAmount);
         if (adjustedAmount !== this.currentAmount) {
             this.log(`买入金额调整: 目标=${this.currentAmount} USDT -> 调整后=${adjustedAmount} USDT`, 'info');
         }
         await this.setTotalAmount(adjustedAmount);
+        
+        // 5. 检查余额是否充足
+        await this.checkBalanceSufficient();
         
         // 6. 点击买入按钮
         await this.clickBuyButton();
@@ -846,39 +849,41 @@ class BinanceAutoTrader {
     async setSellPrice() {
         this.log('设置买入价格和卖出价格...', 'info');
         
-        // 1. 获取建议价格
-        let suggestedPriceText = document.querySelector('div.text-PrimaryText.cursor-pointer.ml-\\[4px\\]');
-        if (!suggestedPriceText) {
-            // 备用查找方式
-            const priceElements = document.querySelectorAll('div[class*="text-PrimaryText"][class*="cursor-pointer"]');
+        // 1. 获取成交价格（从订单价格元素中获取）
+        const tradePriceElement = document.querySelector('div.flex.items-center.justify-between[role="gridcell"] div.flex-1.cursor-pointer[style*="color: var(--color-Buy)"]');
+        if (!tradePriceElement) {
+            // 备用查找方式：查找包含成交价格的元素
+            const priceElements = document.querySelectorAll('div[style*="color: var(--color-Buy)"]');
             let foundElement = null;
             for (const element of priceElements) {
-                if (element.textContent.includes('$') && element.textContent.match(/\d+\.\d+/)) {
+                const text = element.textContent.trim();
+                if (text && text.match(/^\d+\.\d+$/)) {
                     foundElement = element;
                     break;
                 }
             }
             if (!foundElement) {
-                throw new Error('未找到建议价格文本');
+                throw new Error('未找到成交价格元素');
             }
-            suggestedPriceText = foundElement;
+            tradePriceElement = foundElement;
         }
         
-        // 从建议价格文本中提取价格数字
-        const priceText = suggestedPriceText.textContent;
-        const priceMatch = priceText.match(/\$?([\d.]+)/);
-        if (!priceMatch) {
-            throw new Error('无法从建议价格文本中提取价格');
+        // 从成交价格元素中提取价格数字
+        const tradePriceText = tradePriceElement.textContent.trim();
+        const tradePrice = parseFloat(tradePriceText);
+        if (isNaN(tradePrice) || tradePrice <= 0) {
+            throw new Error(`成交价格格式无效: ${tradePriceText}`);
         }
         
-        const suggestedPrice = parseFloat(priceMatch[1]);
-        if (isNaN(suggestedPrice) || suggestedPrice <= 0) {
-            throw new Error('建议价格格式无效');
-        }
+        this.log(`获取到成交价格: ${tradePrice}`, 'info');
         
-        this.log(`获取到建议价格: ${suggestedPrice}`, 'info');
+        // 2. 计算买入价格：成交价格乘以1.01（上升1%）
+        const buyPrice = tradePrice * 1.01;
+        const buyPriceFormatted = buyPrice.toFixed(8);
         
-        // 2. 设置买入价格
+        this.log(`计算买入价格: ${tradePrice} * 1.01 = ${buyPriceFormatted}`, 'info');
+        
+        // 3. 设置买入价格
         const buyPriceInput = document.querySelector('input[step="1e-8"]');
         if (!buyPriceInput) {
             throw new Error('未找到买入价格输入框');
@@ -889,19 +894,18 @@ class BinanceAutoTrader {
         buyPriceInput.select();
         buyPriceInput.value = '';
         
-        const buyPriceFormatted = suggestedPrice.toFixed(8);
         buyPriceInput.value = buyPriceFormatted;
         buyPriceInput.dispatchEvent(new Event('input', { bubbles: true }));
         buyPriceInput.dispatchEvent(new Event('change', { bubbles: true }));
         
         this.log(`买入价格设置完成: ${buyPriceFormatted}`, 'success');
         
-        // 3. 计算并设置卖出价格（应用折价率）
+        // 4. 计算并设置卖出价格：买入价格乘以折价率（默认0.98）
         const discountMultiplier = 1 - this.sellDiscountRate;
-        const sellPrice = suggestedPrice * discountMultiplier;
+        const sellPrice = buyPrice * discountMultiplier;
         const sellPriceFormatted = sellPrice.toFixed(8);
         
-        this.log(`计算卖出价格: ${suggestedPrice} * ${discountMultiplier.toFixed(3)} = ${sellPriceFormatted} (折价率: ${(this.sellDiscountRate * 100).toFixed(1)}%)`, 'info');
+        this.log(`计算卖出价格: ${buyPrice} * ${discountMultiplier.toFixed(3)} = ${sellPriceFormatted} (折价率: ${(this.sellDiscountRate * 100).toFixed(1)}%)`, 'info');
         
         // 查找卖出价格输入框
         const sellPriceInput = document.querySelector('input[placeholder="限价卖出"]');
@@ -919,6 +923,41 @@ class BinanceAutoTrader {
         sellPriceInput.dispatchEvent(new Event('change', { bubbles: true }));
         
         this.log(`卖出价格设置完成: ${sellPriceFormatted}`, 'success');
+    }
+
+    // 检查余额是否充足
+    async checkBalanceSufficient() {
+        this.log('检查余额是否充足...', 'info');
+        
+        // 查找余额不足的按钮
+        const insufficientBalanceButton = document.querySelector('button.bn-button.bn-button__primary[class*="data-size-middle"][class*="w-full"]');
+        
+        if (insufficientBalanceButton) {
+            const buttonText = insufficientBalanceButton.textContent.trim();
+            
+            // 检查按钮文本是否包含余额不足相关的信息
+            if (buttonText.includes('添加USDT余额') || 
+                buttonText.includes('余额不足') || 
+                buttonText.includes('充值') ||
+                buttonText.includes('Add USDT Balance') ||
+                buttonText.includes('Insufficient Balance')) {
+                
+                this.log('余额不足，停止操作', 'error');
+                throw new Error('余额不足，停止操作');
+            }
+        }
+        
+        // 额外检查：查找可能的余额不足提示
+        const balanceWarningElements = document.querySelectorAll('div[class*="warning"], div[class*="error"], div[class*="insufficient"]');
+        for (const element of balanceWarningElements) {
+            const text = element.textContent.toLowerCase();
+            if (text.includes('余额不足') || text.includes('insufficient') || text.includes('balance')) {
+                this.log('检测到余额不足警告，停止操作', 'error');
+                throw new Error('余额不足，停止操作');
+            }
+        }
+        
+        this.log('余额检查通过', 'success');
     }
 
     // 计算带安全缓冲的买入金额，并做向下取小数位处理，降低超额风险
