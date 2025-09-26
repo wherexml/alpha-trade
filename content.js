@@ -929,31 +929,31 @@ class BinanceAutoTrader {
     async checkBalanceSufficient() {
         this.log('检查余额是否充足...', 'info');
         
-        // 查找余额不足的按钮
-        const insufficientBalanceButton = document.querySelector('button.bn-button.bn-button__primary[class*="data-size-middle"][class*="w-full"]');
+        // 精确查找余额不足的按钮 - 根据Buy_Process.md中的要求
+        // 只检查买入按钮是否变成了"添加USDT余额"按钮
+        const buyButton = document.querySelector('button.bn-button.bn-button__buy[class*="data-size-middle"][class*="w-full"]');
         
-        if (insufficientBalanceButton) {
-            const buttonText = insufficientBalanceButton.textContent.trim();
+        if (buyButton) {
+            const buttonText = buyButton.textContent.trim();
             
-            // 检查按钮文本是否包含余额不足相关的信息
-            if (buttonText.includes('添加USDT余额') || 
-                buttonText.includes('余额不足') || 
-                buttonText.includes('充值') ||
-                buttonText.includes('Add USDT Balance') ||
-                buttonText.includes('Insufficient Balance')) {
+            // 精确匹配余额不足的按钮文本
+            if (buttonText === '添加USDT余额' || 
+                buttonText === 'Add USDT Balance' ||
+                buttonText.includes('添加USDT余额') ||
+                buttonText.includes('Add USDT Balance')) {
                 
-                this.log('余额不足，停止操作', 'error');
+                this.log('余额不足，不要点击', 'error');
                 throw new Error('余额不足，停止操作');
             }
         }
         
-        // 额外检查：查找可能的余额不足提示
-        const balanceWarningElements = document.querySelectorAll('div[class*="warning"], div[class*="error"], div[class*="insufficient"]');
-        for (const element of balanceWarningElements) {
-            const text = element.textContent.toLowerCase();
-            if (text.includes('余额不足') || text.includes('insufficient') || text.includes('balance')) {
-                this.log('检测到余额不足警告，停止操作', 'error');
-                throw new Error('余额不足，停止操作');
+        // 检查是否有正常的买入按钮（确保不是余额不足状态）
+        const normalBuyButton = document.querySelector('button.bn-button.bn-button__buy[class*="data-size-middle"][class*="w-full"]');
+        if (normalBuyButton) {
+            const buttonText = normalBuyButton.textContent.trim();
+            if (buttonText.includes('买入') && !buttonText.includes('添加USDT') && !buttonText.includes('充值')) {
+                this.log('找到正常买入按钮，余额充足', 'success');
+                return; // 找到正常买入按钮，余额充足
             }
         }
         
