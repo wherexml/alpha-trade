@@ -24,7 +24,7 @@ class BinanceAutoTrader {
         this.lastTradeDate = null; // 上次交易日期
         
         // 配置参数
-        this.tradeDelay = 2; // 每笔买入的延迟时间(秒)
+        this.tradeDelay = 1; // 每笔买入的延迟时间(秒)
         this.countdownInterval = null; // 倒计时定时器
         
         // 智能交易配置
@@ -47,6 +47,7 @@ class BinanceAutoTrader {
 
         // 智能交易买入比例
         this.buyAmountRatio = 1.0; // 默认买入100%金额
+        this.flatBuyAmountRatio = 0.5; // 平缓信号默认买入50%
 
         // 卖出折价率
         this.sellDiscountRate = 0.02; // 默认2%折价率
@@ -125,6 +126,10 @@ class BinanceAutoTrader {
                     <input type="number" id="config-delay" step="0.5" min="0" value="2">
                 </div>
                 <div class="config-row">
+                    <label for="config-flat-percent">平缓买入比例 (%):</label>
+                    <input type="number" id="config-flat-percent" step="0.1" min="0" max="100" value="50">
+                </div>
+                <div class="config-row">
                     <label for="config-sell-discount">卖出折价率 (%):</label>
                     <input type="number" id="config-sell-discount" step="0.1" min="0" max="10" value="2">
                 </div>
@@ -133,7 +138,7 @@ class BinanceAutoTrader {
                     <div class="config-info">
                         <div class="config-info-item">
                             <span class="config-info-label">买入条件：</span>
-                            <span class="config-info-text">最近3个信号：[平缓, 平缓, 平缓/上涨] → 买入50%金额</span>
+                            <span class="config-info-text">最近3个信号：[平缓, 平缓, 平缓/上涨] → 买入配置比例</span>
                         </div>
                         <div class="config-info-item">
                             <span class="config-info-label">买入条件：</span>
@@ -444,7 +449,8 @@ class BinanceAutoTrader {
 				count: tradeCount,
 				delay: this.tradeDelay,
 				sellDiscountRate: this.sellDiscountRate,
-				smartTradingMode: this.smartTradingMode
+				smartTradingMode: this.smartTradingMode,
+				flatBuyAmountRatio: this.flatBuyAmountRatio
 			});
 			this.log('已保存启动时的金额与次数到本地', 'info');
 		} catch (e) {
@@ -1707,10 +1713,14 @@ class BinanceAutoTrader {
     loadConfigToPanel() {
         const configDelay = document.getElementById('config-delay');
         const configSellDiscount = document.getElementById('config-sell-discount');
-        
+        const configFlatPercent = document.getElementById('config-flat-percent');
+
         configDelay.value = typeof this.tradeDelay === 'number' ? this.tradeDelay : 2;
         configSellDiscount.value = (this.sellDiscountRate * 100) || 2;
-        
+        if (configFlatPercent) {
+            configFlatPercent.value = this.getFlatBuyRatioDisplayValue();
+        }
+
         // 添加实时监听
         this.addConfigListeners();
     }
@@ -1719,6 +1729,7 @@ class BinanceAutoTrader {
     addConfigListeners() {
         const configDelay = document.getElementById('config-delay');
         const configSellDiscount = document.getElementById('config-sell-discount');
+        const configFlatPercent = document.getElementById('config-flat-percent');
         
         // 监听延迟时间变化
         if (configDelay) {
@@ -1745,41 +1756,94 @@ class BinanceAutoTrader {
                 }
             });
         }
+
+        if (configFlatPercent) {
+            configFlatPercent.addEventListener('input', () => {
+                const rawValue = parseFloat(configFlatPercent.value);
+                if (isNaN(rawValue) || rawValue < 0) return;
+
+                const sanitized = Math.min(rawValue, 100);
+                if (sanitized !== rawValue) {
+                    configFlatPercent.value = sanitized;
+                }
+
+                const ratio = this.normalizeFlatBuyRatio(sanitized, this.flatBuyAmountRatio);
+                this.flatBuyAmountRatio = ratio;
+
+                if (ratio === 0) {
+                    this.log('平缓信号买入已关闭', 'info');
+                } else if (ratio === 1) {
+                    this.log('平缓信号买入比例已更新为: 100%', 'info');
+                } else {
+                    this.log(`平缓信号买入比例已更新为: ${(ratio * 100).toFixed(2)}%`, 'info');
+                }
+            });
+        }
+    }
+
+    normalizeFlatBuyRatio(value, defaultValue = 0.5) {
+        if (typeof value !== 'number' || isNaN(value)) return defaultValue;
+        if (value < 0) return 0;
+
+        let ratio = value;
+        if (ratio > 1) {
+            ratio = ratio / 100;
+        }
+
+        return Math.max(0, Math.min(1, ratio));
+    }
+
+    getFlatBuyRatioDisplayValue() {
+        const ratio = (typeof this.flatBuyAmountRatio === 'number' && !isNaN(this.flatBuyAmountRatio))
+            ? this.flatBuyAmountRatio
+            : 0.5;
+        const percent = Math.round(ratio * 10000) / 100; // 保留两位小数
+        return percent;
     }
 
     // 保存配置
     async saveConfig() {
         const configDelay = parseFloat(document.getElementById('config-delay').value);
         const configSellDiscount = parseFloat(document.getElementById('config-sell-discount').value);
-        
+        const rawFlatPercent = parseFloat(document.getElementById('config-flat-percent').value);
+
         if (isNaN(configDelay) || configDelay < 0) {
             this.log('延迟时间必须大于等于0秒', 'error');
             return;
         }
-        
+
         if (isNaN(configSellDiscount) || configSellDiscount < 0 || configSellDiscount > 10) {
             this.log('卖出折价率必须在0-10%之间', 'error');
             return;
         }
-        
+
+        if (isNaN(rawFlatPercent) || rawFlatPercent < 0 || rawFlatPercent > 100) {
+            this.log('平缓买入比例必须在0-100%之间', 'error');
+            return;
+        }
+
+        const normalizedFlatRatio = this.normalizeFlatBuyRatio(rawFlatPercent, this.flatBuyAmountRatio);
+
         // 更新配置（仅处理延迟与卖出折价率）
         this.tradeDelay = configDelay;
         this.sellDiscountRate = configSellDiscount / 100; // 转换为小数
-        
+        this.flatBuyAmountRatio = normalizedFlatRatio;
+
 		// Persist only config fields; do not override amount/count here
 		try {
 			const prev = await this.getStorageData('userConfig') || {};
 			await this.setStorageData('userConfig', {
 				...prev,
 				delay: configDelay,
-				sellDiscountRate: this.sellDiscountRate
+				sellDiscountRate: this.sellDiscountRate,
+				flatBuyAmountRatio: this.flatBuyAmountRatio
 			});
 		} catch (e) {
 			this.log(`Persist config failed: ${e.message}`, 'error');
 		}
-        
-        this.log(`配置已保存: 延迟=${configDelay}s, 折价率=${configSellDiscount}%`, 'success');
-        
+
+        this.log(`配置已保存: 延迟=${configDelay}s, 平缓买入比例=${(this.flatBuyAmountRatio * 100).toFixed(2)}%, 折价率=${configSellDiscount}%`, 'success');
+
         // 隐藏配置面板
         document.getElementById('config-panel').style.display = 'none';
     }
@@ -1797,18 +1861,19 @@ class BinanceAutoTrader {
                 this.currentAmount = userConfig.amount || 200;
                 this.maxTradeCount = userConfig.count || 40;
                 this.tradeDelay = typeof userConfig.delay === 'number' ? userConfig.delay : 2;
-                
+
                 // 加载智能交易配置
                 this.smartTradingMode = userConfig.smartTradingMode || false;
-                this.sellDiscountRate = userConfig.sellDiscountRate || 0.02;
-                
+                this.sellDiscountRate = (typeof userConfig.sellDiscountRate === 'number') ? userConfig.sellDiscountRate : 0.02;
+                this.flatBuyAmountRatio = this.normalizeFlatBuyRatio(userConfig.flatBuyAmountRatio, this.flatBuyAmountRatio);
+
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
                 document.getElementById('trade-count').value = this.maxTradeCount;
                 this.updateSmartTradingSwitch();
                 this.updateTradeCounter();
-                
-                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}s, 智能交易=${this.smartTradingMode}`, 'info');
+
+                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}s, 平缓买入比例=${(this.flatBuyAmountRatio * 100).toFixed(2)}%, 智能交易=${this.smartTradingMode}`, 'info');
                     }
                 } catch (error) {
             this.log(`加载用户配置失败: ${error.message}`, 'error');
@@ -2190,6 +2255,8 @@ class BinanceAutoTrader {
         }
 
         const [first, second, third] = recentSignals;
+        const flatRatio = this.normalizeFlatBuyRatio(this.flatBuyAmountRatio, 0.5);
+        this.flatBuyAmountRatio = flatRatio;
 
         // 100%买入条件：[平缓/上涨, 上涨, 上涨]
         if ((first === 'flat' || first === 'rising') && second === 'rising' && third === 'rising') {
@@ -2198,7 +2265,10 @@ class BinanceAutoTrader {
 
         // 50%买入条件：[平缓, 平缓, 平缓/上涨]
         if (first === 'flat' && second === 'flat' && (third === 'flat' || third === 'rising')) {
-            return 0.5;
+            if (flatRatio <= 0) {
+                return null;
+            }
+            return flatRatio;
         }
 
         return null;
