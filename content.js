@@ -15,14 +15,22 @@ class BinanceAutoTrader {
         // 作用域与安全点击
         this.orderRoot = null; // 交易面板根节点
         
-        // 交易次数控制
+        // 交易控制参数
+        this.tradeControlMode = 'count'; // count 或 total
         this.maxTradeCount = 0; // 最大交易次数，0表示无限制
         this.currentTradeCount = 0; // 当前交易次数
-        
+        this.targetTotalAmount = 16384; // 目标总额（总额控制模式）
+        this.sessionTradedAmount = 0; // 本次会话已成交金额
+        this.estimatedTotalTrades = 0; // 预估所需交易次数
+        this.lastDetectedTradeAmount = null; // 最近一次从弹窗解析的金额
+
         // 每日统计
         this.dailyTradeCount = 0; // 今日交易次数
+        this.dailyTradeAmount = 0; // 今日成交总额
         this.lastTradeDate = null; // 上次交易日期
-        
+        this.utcTimeDisplay = null; // UTC 时间显示元素
+        this.utcTimeInterval = null; // UTC 时间定时器
+
         // 配置参数
         this.tradeDelay = 1; // 每笔买入的延迟时间(秒)
         this.countdownInterval = null; // 倒计时定时器
@@ -78,6 +86,31 @@ class BinanceAutoTrader {
         };
         
         this.init();
+    }
+
+    startUTCTimeTicker() {
+        if (!this.utcTimeDisplay) return;
+
+        const update = () => {
+            const now = new Date();
+            const year = now.getUTCFullYear();
+            const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(now.getUTCDate()).padStart(2, '0');
+            const hour = String(now.getUTCHours()).padStart(2, '0');
+            const minute = String(now.getUTCMinutes()).padStart(2, '0');
+            const second = String(now.getUTCSeconds()).padStart(2, '0');
+            this.utcTimeDisplay.textContent = `UTC ${year}-${month}-${day} ${hour}:${minute}:${second}`;
+        };
+
+        update();
+        this.utcTimeInterval = setInterval(update, 1000);
+    }
+
+    stopUTCTimeTicker() {
+        if (this.utcTimeInterval) {
+            clearInterval(this.utcTimeInterval);
+            this.utcTimeInterval = null;
+        }
     }
 
     // DOM元素缓存和获取方法
@@ -160,17 +193,34 @@ class BinanceAutoTrader {
                 </div>
             </div>
             <div class="content">
-                <div class="input-row">
-                    <label for="trade-amount">交易金额 (USDT):</label>
-                    <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1" value="200">
+                <div class="mode-selector" id="trade-mode-selector">
+                    <label class="mode-option">
+                        <input type="radio" name="trade-mode" value="count" checked>
+                        <span>次数控制</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="trade-mode" value="total">
+                        <span>总额控制</span>
+                    </label>
                 </div>
-                <div class="input-row">
+                <div class="input-row" id="target-total-row" style="display: none;">
+                    <label for="target-total">目标总金额 (USDT):</label>
+                    <input type="number" id="target-total" step="1" min="1" value="16384">
+                </div>
+                <div class="input-row" id="trade-amount-row">
+                    <label for="trade-amount">每笔交易金额 (USDT):</label>
+                    <input type="number" id="trade-amount" placeholder="输入金额" step="1" min="1" value="200">
+                </div>
+                <div class="input-row" id="trade-count-row">
                     <label for="trade-count">买入次数限制:</label>
                     <input type="number" id="trade-count" placeholder="输入次数(0=无限制)" step="1" min="0" value="40">
                 </div>
                 <div class="status-display" id="status-display">等待开始</div>
-                <div class="trade-counter" id="trade-counter">买入次数: 0/40</div>
-                <div class="daily-stats" id="daily-stats">今日交易: 0次</div>
+                <div class="trade-counter" id="trade-counter"></div>
+                <div class="trade-remaining" id="trade-remaining" style="display: none;"></div>
+                <div class="trade-progress" id="trade-progress" style移动: none;"></div>
+                <div class="daily-stats" id="daily-stats">今日交易(UTC): 0次 / 0.00 USDT</div>
+                <div class="utc-time" id="utc-time-display">UTC --:--:--</div>
                 <div class="control-buttons">
                     <button class="control-btn start-btn" id="start-btn">开始交易</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
@@ -216,12 +266,21 @@ class BinanceAutoTrader {
         this.logContainer = document.getElementById('log-container');
         this.statusDisplay = document.getElementById('status-display');
         this.tradeCounter = document.getElementById('trade-counter');
+        this.tradeRemainingEl = document.getElementById('trade-remaining');
+        this.tradeProgressEl = document.getElementById('trade-progress');
         this.dailyStats = document.getElementById('daily-stats');
+        this.utcTimeDisplay = document.getElementById('utc-time-display');
+        this.modeSelector = document.getElementById('trade-mode-selector');
+        this.targetTotalRow = document.getElementById('target-total-row');
+        this.tradeCountRow = document.getElementById('trade-count-row');
+        this.targetTotalInput = document.getElementById('target-total');
 
+        this.setTradeControlMode(this.tradeControlMode);
         this.setupUIEvents();
         this.makeDraggable();
         this.loadDailyStats();
         this.loadUserConfig();
+        this.startUTCTimeTicker();
         
         // Start trend detection
         this.setupTrend();
@@ -233,7 +292,7 @@ class BinanceAutoTrader {
         if (!refresh && this.orderRoot && document.body.contains(this.orderRoot)) return this.orderRoot;
 
         const candidates = [];
-        // 通过“买入”按钮定位
+        // 通过"买入"按钮定位
         const allBtns = Array.from(document.querySelectorAll('button'))
             .filter(b => /买入/.test(b.textContent || '') && !/充值|卖出/.test(b.textContent || '') && this.isVisible(b));
         for (const b of allBtns) {
@@ -366,6 +425,70 @@ class BinanceAutoTrader {
         if (smartTradingSwitch) {
             smartTradingSwitch.addEventListener('change', (e) => this.setSmartTradingMode(!!e.target.checked));
         }
+
+        const modeRadios = Array.from(this.modeSelector ? this.modeSelector.querySelectorAll('input[name="trade-mode"]') : []);
+        modeRadios.forEach(radio => {
+            radio.addEventListener('change', (event) => {
+                if (event.target.checked) {
+                    this.setTradeControlMode(event.target.value);
+                }
+            });
+        });
+
+        const tradeAmountInput = document.getElementById('trade-amount');
+        if (tradeAmountInput) {
+            tradeAmountInput.addEventListener('change', () => {
+                const value = parseFloat(tradeAmountInput.value);
+                if (!isNaN(value) && value >= 1) {
+                    this.currentAmount = value;
+                }
+                this.updateTradeCounter();
+            });
+        }
+
+        if (this.targetTotalInput) {
+            this.targetTotalInput.addEventListener('change', () => {
+                const value = parseFloat(this.targetTotalInput.value);
+                if (!isNaN(value) && value >= 1) {
+                    this.targetTotalAmount = value;
+                }
+                this.updateTradeCounter();
+            });
+        }
+    }
+
+    setTradeControlMode(mode) {
+        const normalized = mode === 'total' ? 'total' : 'count';
+        this.tradeControlMode = normalized;
+
+        if (this.targetTotalRow) {
+            this.targetTotalRow.style.display = normalized === 'total' ? 'flex' : 'none';
+        }
+        if (this.tradeCountRow) {
+            this.tradeCountRow.style.display = normalized === 'total' ? 'none' : 'flex';
+        }
+        if (this.tradeRemainingEl) {
+            this.tradeRemainingEl.style.display = normalized === 'total' ? 'block' : 'none';
+        }
+        if (this.tradeProgressEl) {
+            this.tradeProgressEl.style.display = normalized === 'total' ? 'block' : 'none';
+        }
+
+        if (this.modeSelector) {
+            const radios = this.modeSelector.querySelectorAll('input[name="trade-mode"]');
+            radios.forEach(radio => {
+                radio.checked = radio.value === normalized;
+            });
+        }
+
+        if (normalized === 'total') {
+            const targetInputValue = parseFloat(this.targetTotalInput ? this.targetTotalInput.value : this.targetTotalAmount);
+            if (!isNaN(targetInputValue) && targetInputValue >= 1) {
+                this.targetTotalAmount = targetInputValue;
+            }
+        }
+
+        this.updateTradeCounter();
     }
 
     makeDraggable() {
@@ -431,39 +554,56 @@ class BinanceAutoTrader {
         const isSmartSession = this.smartTradingMode;
 
         let amount = parseFloat(document.getElementById('trade-amount').value);
-        if (!amount || amount < 0.1) {
-            this.log('请输入有效金额（≥0.1 USDT）', 'error');
+        if (!amount || amount < 1) {
+            this.log('请输入有效金额（≥1 USDT）', 'error');
             return;
         }
 
         const tradeCount = parseInt(document.getElementById('trade-count').value) || 0;
 
+        if (this.tradeControlMode === 'total') {
+            const targetValue = this.targetTotalInput ? parseFloat(this.targetTotalInput.value) : this.targetTotalAmount;
+            if (!targetValue || targetValue < 1) {
+                this.log('请输入有效的目标总金额（≥1 USDT）', 'error');
+                return;
+            }
+            this.targetTotalAmount = targetValue;
+            this.estimatedTotalTrades = Math.max(1, Math.ceil(this.targetTotalAmount / amount));
+            this.maxTradeCount = 0; // 禁用次数控制，改用总额控制
+        } else {
+            this.maxTradeCount = tradeCount;
+        }
+
         if (!this.performSafetyChecks()) {
             return;
         }
 
-		// Persist the current inputs as defaults for next session
-		try {
-			await this.setStorageData('userConfig', {
-				amount: amount,
-				count: tradeCount,
-				delay: this.tradeDelay,
-				sellDiscountRate: this.sellDiscountRate,
-				smartTradingMode: this.smartTradingMode,
-				flatBuyAmountRatio: this.flatBuyAmountRatio
-			});
-			this.log('已保存启动时的金额与次数到本地', 'info');
-		} catch (e) {
-			this.log(`Persist user config failed: ${e.message}`, 'error');
-		}
+        // Persist the current inputs as defaults for next session
+        try {
+            await this.setStorageData('userConfig', {
+                amount: amount,
+                count: tradeCount,
+                delay: this.tradeDelay,
+                sellDiscountRate: this.sellDiscountRate,
+                smartTradingMode: this.smartTradingMode,
+                flatBuyAmountRatio: this.flatBuyAmountRatio,
+                tradeControlMode: this.tradeControlMode,
+                targetTotalAmount: this.targetTotalAmount
+            });
+            this.log('已保存启动时的金额与次数到本地', 'info');
+        } catch (e) {
+            this.log(`Persist user config failed: ${e.message}`, 'error');
+        }
 
         this.isRunning = true;
         this.sessionMode = isSmartSession ? 'smart' : 'manual';
         this.forceStop = false;
         this.isSmartTradingExecution = false;
         this.currentAmount = amount;
-        this.maxTradeCount = tradeCount;
         this.currentTradeCount = 0;
+        this.sessionTradedAmount = 0;
+        this.lastDetectedTradeAmount = null;
+        this.updateTradeCounter();
 
         if (isSmartSession) {
             this.buyAmountRatio = 1.0;
@@ -476,10 +616,15 @@ class BinanceAutoTrader {
 
         this.log(isSmartSession ? '🤖 智能交易启动，等待趋势信号' : '🚀 开始自动买入', 'success');
         this.log(`💰 基础交易金额: ${amount} USDT`, 'info');
-        if (tradeCount > 0) {
-            this.log(`📊 限制次数: ${tradeCount}`, 'info');
+        if (this.tradeControlMode === 'total') {
+            this.log(`🎯 目标总额: ${this.targetTotalAmount} USDT`, 'info');
+            this.log(`📟 预计需要约 ${this.estimatedTotalTrades} 次交易`, 'info');
         } else {
-            this.log('📊 无次数限制', 'info');
+            if (tradeCount > 0) {
+                this.log(`📊 限制次数: ${tradeCount}`, 'info');
+            } else {
+                this.log('📊 无次数限制', 'info');
+            }
         }
 
         if (isSmartSession) {
@@ -552,6 +697,9 @@ class BinanceAutoTrader {
             this.log('买入已停止', 'info');
             if (completedTrades > 0) {
                 this.log(`本次交易完成，共执行 ${completedTrades} 次买入`, 'info');
+                if (this.tradeControlMode === 'total') {
+                    this.log(`本次会话累计成交: ${this.sessionTradedAmount.toFixed(4)} USDT`, 'info');
+                }
             } else {
                 this.log('本次交易未执行任何买入操作', 'info');
             }
@@ -584,7 +732,7 @@ class BinanceAutoTrader {
     updateUI() {
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
-        
+
         if (this.isRunning) {
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
@@ -612,23 +760,135 @@ class BinanceAutoTrader {
         }
     }
 
+    getConfiguredTradeAmount() {
+        const tradeAmountInput = document.getElementById('trade-amount');
+        const value = tradeAmountInput ? parseFloat(tradeAmountInput.value) : this.currentAmount;
+
+        if (!isNaN(value) && value >= 1) {
+            return value;
+        }
+
+        if (this.currentAmount && this.currentAmount >= 1) {
+            return this.currentAmount;
+        }
+
+        return 1;
+    }
+
+    calculateRemainingTarget() {
+        if (this.tradeControlMode !== 'total') {
+            return 0;
+        }
+
+        const target = Number(this.targetTotalAmount) || 0;
+        const traded = Number(this.sessionTradedAmount) || 0;
+        return Math.max(0, target - traded);
+    }
+
+    getNextTradeAmount() {
+        const baseAmount = this.getConfiguredTradeAmount();
+        if (this.tradeControlMode !== 'total') {
+            return baseAmount;
+        }
+
+        const remaining = this.calculateRemainingTarget();
+        if (remaining < 1) {
+            return 0;
+        }
+
+        const planned = Math.min(baseAmount, remaining);
+        if (planned < 1) {
+            return 0;
+        }
+
+        return Number(planned.toFixed(6));
+    }
+
+    hasReachedTotalTarget() {
+        if (this.tradeControlMode !== 'total') {
+            return false;
+        }
+
+        return this.calculateRemainingTarget() < 1;
+    }
+
     updateTradeCounter() {
-        if (this.maxTradeCount > 0) {
-            this.tradeCounter.textContent = `买入次数: ${this.currentTradeCount}/${this.maxTradeCount}`;
-            
-            // 根据进度改变颜色
-            const progress = this.currentTradeCount / this.maxTradeCount;
-            if (progress >= 0.8) {
-                this.tradeCounter.className = 'trade-counter warning';
-            } else if (progress >= 0.5) {
-                this.tradeCounter.className = 'trade-counter info';
+        if (!this.tradeCounter) return;
+
+        if (this.tradeControlMode === 'total') {
+            const target = Math.max(0, Number(this.targetTotalAmount) || 0);
+            const traded = Math.max(0, Number(this.sessionTradedAmount) || 0);
+            const perTrade = Math.max(1, Number(this.getConfiguredTradeAmount()) || 1);
+            const remainingAmount = Math.max(0, target - traded);
+            const remainingTrades = remainingAmount > 0 ? Math.ceil(remainingAmount / perTrade) : 0;
+            const progressPercent = target > 0 ? Math.min(100, (traded / target) * 100) : 0;
+
+            this.tradeCounter.textContent = `已交易: ${traded.toFixed(2)} USDT / 目标: ${target.toFixed(2)} USDT`;
+            this.tradeCounter.className = 'trade-counter total-mode';
+
+            if (this.tradeRemainingEl) {
+                this.tradeRemainingEl.textContent = `预计剩余次数: ${remainingTrades}`;
+            }
+            if (this.tradeProgressEl) {
+                this.tradeProgressEl.textContent = `进度: ${progressPercent.toFixed(2)}%`;
+            }
+
+            this.estimatedTotalTrades = target > 0 ? Math.ceil(target / perTrade) : 0;
+        } else {
+            if (this.maxTradeCount > 0) {
+                this.tradeCounter.textContent = `买入次数: ${this.currentTradeCount}/${this.maxTradeCount}`;
+
+                // 根据进度改变颜色
+                const progress = this.currentTradeCount / this.maxTradeCount;
+                if (progress >= 0.8) {
+                    this.tradeCounter.className = 'trade-counter warning';
+                } else if (progress >= 0.5) {
+                    this.tradeCounter.className = 'trade-counter info';
+                } else {
+                    this.tradeCounter.className = 'trade-counter';
+                }
             } else {
+                this.tradeCounter.textContent = `买入次数: ${this.currentTradeCount}/无限制`;
                 this.tradeCounter.className = 'trade-counter';
             }
-        } else {
-            this.tradeCounter.textContent = `买入次数: ${this.currentTradeCount}/无限制`;
-            this.tradeCounter.className = 'trade-counter';
+
+            if (this.tradeRemainingEl) {
+                this.tradeRemainingEl.textContent = '';
+            }
+            if (this.tradeProgressEl) {
+                this.tradeProgressEl.textContent = '';
+            }
         }
+    }
+
+    processSuccessfulTrade() {
+        let actualAmount = Number(this.lastDetectedTradeAmount);
+        const hasCapturedAmount = !isNaN(actualAmount) && actualAmount > 0;
+
+        if (!hasCapturedAmount) {
+            actualAmount = Number(this.getAdjustedBuyAmount(this.currentAmount)) || 0;
+            if (this.tradeControlMode === 'total') {
+                this.log('⚠️ 未能从弹窗捕获成交额，使用下单金额进行估算', 'warning');
+            }
+        } else if (this.tradeControlMode === 'total') {
+            this.log(`🧾 本次成交额: ${actualAmount.toFixed(4)} USDT`, 'info');
+        }
+
+        this.lastDetectedTradeAmount = null;
+
+        if (actualAmount < 0) {
+            actualAmount = 0;
+        }
+
+        this.currentTradeCount++;
+
+        if (this.tradeControlMode === 'total' && actualAmount > 0) {
+            const accumulated = Number(this.sessionTradedAmount) || 0;
+            this.sessionTradedAmount = Number((accumulated + actualAmount).toFixed(6));
+        }
+
+        this.updateTradeCounter();
+        return Number(actualAmount.toFixed(6));
     }
 
     async runTradingLoop() {
@@ -642,19 +902,44 @@ class BinanceAutoTrader {
                     this.log('检测到强制停止标志，立即停止交易循环', 'warning');
                     break;
                 }
-                
+
+                if (this.tradeControlMode === 'total' && this.hasReachedTotalTarget()) {
+                    this.log('🎯 已达到目标总额，自动停止交易', 'success');
+                    this.stopTrading();
+                    break;
+                }
+
                 // 达到买入次数上限的前置检查
                 if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
                     this.log(`🛑 已达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
                     this.stopTrading();
                     break;
                 }
-                
+
                 // 每次循环前检查页面状态
                 if (!this.performRuntimeChecks()) {
                     await this.sleep(5000); // 等待5秒后重试
                     continue;
                 }
+
+                // 根据模式准备本轮交易金额
+                const plannedAmount = this.tradeControlMode === 'total'
+                    ? this.getNextTradeAmount()
+                    : this.getConfiguredTradeAmount();
+
+                if (this.tradeControlMode === 'total') {
+                    if (!plannedAmount || plannedAmount < 1) {
+                        this.log('🎯 剩余目标金额不足 1 USDT，结束交易以避免无效下单', 'info');
+                        this.stopTrading();
+                        break;
+                    }
+                    this.currentAmount = plannedAmount;
+                    this.log(`🔁 本轮计划成交额: ${plannedAmount.toFixed(4)} USDT`, 'info');
+                } else {
+                    this.currentAmount = plannedAmount;
+                }
+
+                this.lastDetectedTradeAmount = null;
 
                 // 步骤1: 执行买入
                 await this.executeBuyWithRetry();
@@ -673,22 +958,32 @@ class BinanceAutoTrader {
                 }
 
                 consecutiveErrors = 0; // 重置错误计数
-                this.currentTradeCount++; // 增加交易次数
-                this.updateTradeCounter(); // 更新交易次数显示
-                
+                const actualAmount = this.processSuccessfulTrade(); // 更新交易次数与金额
+
                 // 更新每日统计
-                await this.incrementDailyTradeCount();
-                
+                await this.incrementDailyTradeCount(actualAmount);
+
                 const tradeDuration = Date.now() - this.tradeStartTime;
                 this.log(`第 ${this.currentTradeCount} 轮买入完成 (耗时: ${tradeDuration}ms)`, 'success');
-                
+
+                if (this.tradeControlMode === 'total') {
+                    const remaining = this.calculateRemainingTarget();
+                    this.log(`📊 累计成交: ${this.sessionTradedAmount.toFixed(4)} USDT，剩余目标: ${remaining.toFixed(4)} USDT`, 'info');
+                }
+
                 // 检查是否达到买入次数限制
                 if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
                     this.log(`⚠️ 已达到买入次数限制 (${this.maxTradeCount})，自动停止`, 'error');
                     this.stopTrading();
                     break;
                 }
-                
+
+                if (this.tradeControlMode === 'total' && this.hasReachedTotalTarget()) {
+                    this.log('🎯 已完成目标总额，自动停止交易', 'success');
+                    this.stopTrading();
+                    break;
+                }
+
                 // 提前警告功能
                 if (this.maxTradeCount > 0) {
                     const remaining = this.maxTradeCount - this.currentTradeCount;
@@ -970,10 +1265,18 @@ class BinanceAutoTrader {
     getAdjustedBuyAmount(amount) {
         const a = Number(amount) || 0;
         if (a <= 0) return a;
+        if (this.tradeControlMode === 'total') {
+            const remaining = this.calculateRemainingTarget();
+            if (remaining <= a + 0.000001) {
+                const capped = Math.max(1, Math.floor(remaining * 100) / 100);
+                return Number(capped.toFixed(2));
+            }
+        }
+
         const buffered = a * (1 - (this.buyAmountSafetyBuffer || 0));
         // 成交额输入通常是USDT，保留2位并向下取，尽量不超出目标
         const floored = Math.floor(buffered * 100) / 100;
-        return Math.max(0.01, Number(floored.toFixed(2)));
+        return Math.max(1, Number(floored.toFixed(2)));
     }
 
     async switchToBuyTab() {
@@ -1138,7 +1441,7 @@ class BinanceAutoTrader {
 
     async handleBuyConfirmationDialog() {
         this.log('检查买入确认弹窗...', 'info');
-        
+
         // 等待弹窗出现
         await this.sleep(100);
         
@@ -1164,7 +1467,14 @@ class BinanceAutoTrader {
         
         if (confirmButton) {
             this.log('发现买入确认弹窗，准备点击确认按钮', 'info');
-            
+
+            if (this.tradeControlMode === 'total') {
+                const captured = this.captureTradeAmountFromModal();
+                if (captured) {
+                    this.log(`📥 捕获确认弹窗成交额: ${captured.toFixed(4)} USDT`, 'info');
+                }
+            }
+
             // 记录点击前弹窗状态（避免递归调用）
             const beforeClickExists = true; // Found confirmButton implies modal existed
             this.log(`点击前弹窗存在: ${beforeClickExists}`, 'info');
@@ -1371,6 +1681,64 @@ class BinanceAutoTrader {
         
         this.log('未找到符合条件的确认按钮', 'warning');
         return null;
+    }
+
+    captureTradeAmountFromModal() {
+        try {
+            const selectors = ['.bn-modal', '.bn-sdd-dialog', '.ReactModal__Content', '[role="dialog"]'];
+            const seen = new Set();
+            const modals = [];
+
+            selectors.forEach(selector => {
+                document.querySelectorAll(selector).forEach(node => {
+                    if (!seen.has(node)) {
+                        seen.add(node);
+                        modals.push(node);
+                    }
+                });
+            });
+
+            for (const modal of modals) {
+                if (!this.isVisible(modal)) continue;
+
+                // 优先使用结构化的 label/value 组合
+                const structuredItems = Array.from(modal.querySelectorAll('.item'));
+                for (const item of structuredItems) {
+                    const labelEl = item.querySelector('.label');
+                    if (!labelEl) continue;
+                    const labelText = (labelEl.textContent || '').trim();
+                    if (!/成交额/.test(labelText)) continue;
+
+                    const valueEl = item.querySelector('.value');
+                    const parsed = this.parseAmountFromText(valueEl ? valueEl.textContent : '');
+                    if (parsed > 0) {
+                        this.lastDetectedTradeAmount = parsed;
+                        return parsed;
+                    }
+                }
+
+                // 退化处理：直接解析包含"成交额"的文本
+                const fallbackMatch = (modal.innerText || '').match(/成交额[^0-9]*([0-9]+(?:\.[0-9]+)?)/);
+                if (fallbackMatch) {
+                    const parsed = parseFloat(fallbackMatch[1]);
+                    if (!isNaN(parsed) && parsed > 0) {
+                        this.lastDetectedTradeAmount = parsed;
+                        return parsed;
+                    }
+                }
+            }
+        } catch (error) {
+            this.log(`捕获成交额时出现错误: ${error.message}`, 'warning');
+        }
+
+        return null;
+    }
+
+    parseAmountFromText(text) {
+        if (!text) return 0;
+        const normalized = text.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+        const amount = parseFloat(normalized);
+        return !isNaN(amount) ? amount : 0;
     }
 
     async waitForBuyComplete() {
@@ -1620,22 +1988,25 @@ class BinanceAutoTrader {
         try {
             const today = this.getUTCDateString();
             const storedData = await this.getStorageData('dailyStats');
-            
+
             if (storedData && storedData.date === today) {
                 this.dailyTradeCount = storedData.count || 0;
+                this.dailyTradeAmount = storedData.amount || 0;
                 this.lastTradeDate = storedData.date;
             } else {
                 // 新的一天，重置计数
                 this.dailyTradeCount = 0;
+                this.dailyTradeAmount = 0;
                 this.lastTradeDate = today;
                 await this.saveDailyStats();
             }
-            
+
             this.updateDailyStatsDisplay();
             this.log(`今日交易次数: ${this.dailyTradeCount}`, 'info');
-            } catch (error) {
+        } catch (error) {
             this.log(`加载每日统计失败: ${error.message}`, 'error');
             this.dailyTradeCount = 0;
+            this.dailyTradeAmount = 0;
             this.updateDailyStatsDisplay();
         }
     }
@@ -1646,35 +2017,42 @@ class BinanceAutoTrader {
             const today = this.getUTCDateString();
             const data = {
                 date: today,
-                count: this.dailyTradeCount
+                count: this.dailyTradeCount,
+                amount: Number((this.dailyTradeAmount || 0).toFixed(6))
             };
             await this.setStorageData('dailyStats', data);
-                } catch (error) {
+        } catch (error) {
             this.log(`保存每日统计失败: ${error.message}`, 'error');
         }
     }
 
     // 增加今日交易次数
-    async incrementDailyTradeCount() {
+    async incrementDailyTradeCount(actualAmount = 0) {
         const today = this.getUTCDateString();
-        
+
         // 检查是否是新的一天
         if (this.lastTradeDate !== today) {
             this.dailyTradeCount = 0;
+            this.dailyTradeAmount = 0;
             this.lastTradeDate = today;
         }
-        
+
         this.dailyTradeCount++;
+        if (!isNaN(actualAmount) && actualAmount > 0) {
+            const accumulated = Number(this.dailyTradeAmount) || 0;
+            this.dailyTradeAmount = Number((accumulated + actualAmount).toFixed(6));
+        }
         await this.saveDailyStats();
         this.updateDailyStatsDisplay();
-        
+
         this.log(`今日交易次数更新: ${this.dailyTradeCount}`, 'info');
     }
 
     // 更新每日统计显示
     updateDailyStatsDisplay() {
         if (this.dailyStats) {
-            this.dailyStats.textContent = `今日交易: ${this.dailyTradeCount}次`;
+            const amount = Number(this.dailyTradeAmount) || 0;
+            this.dailyStats.textContent = `今日交易(UTC): ${this.dailyTradeCount}次 / ${amount.toFixed(2)} USDT`;
         }
     }
 
@@ -1867,13 +2245,28 @@ class BinanceAutoTrader {
                 this.sellDiscountRate = (typeof userConfig.sellDiscountRate === 'number') ? userConfig.sellDiscountRate : 0.02;
                 this.flatBuyAmountRatio = this.normalizeFlatBuyRatio(userConfig.flatBuyAmountRatio, this.flatBuyAmountRatio);
 
+                if (userConfig.tradeControlMode === 'total' || userConfig.tradeControlMode === 'count') {
+                    this.tradeControlMode = userConfig.tradeControlMode;
+                }
+                if (typeof userConfig.targetTotalAmount === 'number' && userConfig.targetTotalAmount >= 1) {
+                    this.targetTotalAmount = userConfig.targetTotalAmount;
+                }
+
                 // 更新界面显示
                 document.getElementById('trade-amount').value = this.currentAmount;
                 document.getElementById('trade-count').value = this.maxTradeCount;
+                if (this.targetTotalInput) {
+                    this.targetTotalInput.value = this.targetTotalAmount;
+                }
+                this.setTradeControlMode(this.tradeControlMode);
                 this.updateSmartTradingSwitch();
                 this.updateTradeCounter();
 
-                this.log(`已加载用户配置: 金额=${this.currentAmount}U, 次数=${this.maxTradeCount}, 延迟=${this.tradeDelay}s, 平缓买入比例=${(this.flatBuyAmountRatio * 100).toFixed(2)}%, 智能交易=${this.smartTradingMode}`, 'info');
+                const modeDescription = this.tradeControlMode === 'total'
+                    ? `总额控制(${this.targetTotalAmount} USDT)`
+                    : `次数控制(${this.maxTradeCount === 0 ? '无限制' : this.maxTradeCount}次)`;
+
+                this.log(`已加载用户配置: 模式=${modeDescription}, 金额=${this.currentAmount}U, 延迟=${this.tradeDelay}s, 平缓买入比例=${(this.flatBuyAmountRatio * 100).toFixed(2)}%, 智能交易=${this.smartTradingMode}`, 'info');
                     }
                 } catch (error) {
             this.log(`加载用户配置失败: ${error.message}`, 'error');
@@ -2165,6 +2558,12 @@ class BinanceAutoTrader {
         if (!this.smartTradingMode) return;
         if (this.isSmartTradingExecution) return;
 
+        if (this.tradeControlMode === 'total' && this.hasReachedTotalTarget()) {
+            this.log('🎯 已达到目标总额，停止智能交易', 'success');
+            this.stopTrading();
+            return;
+        }
+
         if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
             this.log(`🛑 智能交易达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
             this.stopTrading();
@@ -2201,8 +2600,8 @@ class BinanceAutoTrader {
             this.forceStop = false;
 
             let amount = parseFloat(document.getElementById('trade-amount').value);
-            if (!amount || amount < 0.1) {
-                this.log('请输入有效金额（≥0.1 USDT）', 'error');
+            if (!amount || amount < 1) {
+                this.log('请输入有效金额（≥1 USDT）', 'error');
                 return;
             }
 
@@ -2220,14 +2619,45 @@ class BinanceAutoTrader {
                 return;
             }
 
-            this.currentAmount = amount;
+            if (this.tradeControlMode === 'total') {
+                if (this.hasReachedTotalTarget()) {
+                    this.log('🎯 已达到目标总额，停止智能交易下单', 'success');
+                    this.stopTrading();
+                    return;
+                }
+
+                const remaining = this.calculateRemainingTarget();
+                const planned = Math.min(amount, remaining);
+
+                if (!planned || planned < 1) {
+                    this.log('🎯 剩余目标金额不足 1 USDT，停止智能交易', 'info');
+                    this.stopTrading();
+                    return;
+                }
+
+                this.currentAmount = planned;
+                this.log(`🔁 智能交易计划成交额: ${planned.toFixed(4)} USDT`, 'info');
+            } else {
+                this.currentAmount = amount;
+            }
+
+            this.lastDetectedTradeAmount = null;
             await this.executeBuy();
 
-            await this.incrementDailyTradeCount();
-
-            this.currentTradeCount++;
-            this.updateTradeCounter();
+            const actualAmount = this.processSuccessfulTrade();
+            await this.incrementDailyTradeCount(actualAmount);
             this.log('✅ 智能交易买入完成', 'success');
+
+            if (this.tradeControlMode === 'total') {
+                const remaining = this.calculateRemainingTarget();
+                this.log(`📊 累计成交: ${this.sessionTradedAmount.toFixed(4)} USDT，剩余目标: ${remaining.toFixed(4)} USDT`, 'info');
+
+                if (this.hasReachedTotalTarget()) {
+                    this.log('🎯 已完成目标总额，停止智能交易', 'success');
+                    this.stopTrading();
+                    return;
+                }
+            }
 
             if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
                 this.log(`🛑 已达到买入次数限制 (${this.currentTradeCount}/${this.maxTradeCount})，自动停止`, 'warning');
@@ -2277,7 +2707,7 @@ class BinanceAutoTrader {
 
     // 获取最近N个信号
     getRecentSignals(count) {
-        // 取“最近”的N个信号：数组末尾是最新，返回按时间从早到晚的顺序
+        // 取"最近"的N个信号：数组末尾是最新，返回按时间从早到晚的顺序
         const arr = this.trendData.slice(-count);
         return arr.map(data => data.trend);
     }
