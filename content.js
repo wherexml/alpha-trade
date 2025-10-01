@@ -28,6 +28,8 @@ class BinanceAutoTrader {
         this.dailyTradeCount = 0; // 今日交易次数
         this.dailyTradeAmount = 0; // 今日成交总额
         this.lastTradeDate = null; // 上次交易日期
+        this.utcTimeDisplay = null; // UTC 时间显示元素
+        this.utcTimeInterval = null; // UTC 时间定时器
 
         // 配置参数
         this.tradeDelay = 1; // 每笔买入的延迟时间(秒)
@@ -84,6 +86,31 @@ class BinanceAutoTrader {
         };
         
         this.init();
+    }
+
+    startUTCTimeTicker() {
+        if (!this.utcTimeDisplay) return;
+
+        const update = () => {
+            const now = new Date();
+            const year = now.getUTCFullYear();
+            const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(now.getUTCDate()).padStart(2, '0');
+            const hour = String(now.getUTCHours()).padStart(2, '0');
+            const minute = String(now.getUTCMinutes()).padStart(2, '0');
+            const second = String(now.getUTCSeconds()).padStart(2, '0');
+            this.utcTimeDisplay.textContent = `UTC ${year}-${month}-${day} ${hour}:${minute}:${second}`;
+        };
+
+        update();
+        this.utcTimeInterval = setInterval(update, 1000);
+    }
+
+    stopUTCTimeTicker() {
+        if (this.utcTimeInterval) {
+            clearInterval(this.utcTimeInterval);
+            this.utcTimeInterval = null;
+        }
     }
 
     // DOM元素缓存和获取方法
@@ -191,8 +218,9 @@ class BinanceAutoTrader {
                 <div class="status-display" id="status-display">等待开始</div>
                 <div class="trade-counter" id="trade-counter"></div>
                 <div class="trade-remaining" id="trade-remaining" style="display: none;"></div>
-                <div class="trade-progress" id="trade-progress" style="display: none;"></div>
-                <div class="daily-stats" id="daily-stats">今日交易: 0次 / 0.00 USDT</div>
+                <div class="trade-progress" id="trade-progress" style移动: none;"></div>
+                <div class="daily-stats" id="daily-stats">今日交易(UTC): 0次 / 0.00 USDT</div>
+                <div class="utc-time" id="utc-time-display">UTC --:--:--</div>
                 <div class="control-buttons">
                     <button class="control-btn start-btn" id="start-btn">开始交易</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
@@ -241,6 +269,7 @@ class BinanceAutoTrader {
         this.tradeRemainingEl = document.getElementById('trade-remaining');
         this.tradeProgressEl = document.getElementById('trade-progress');
         this.dailyStats = document.getElementById('daily-stats');
+        this.utcTimeDisplay = document.getElementById('utc-time-display');
         this.modeSelector = document.getElementById('trade-mode-selector');
         this.targetTotalRow = document.getElementById('target-total-row');
         this.tradeCountRow = document.getElementById('trade-count-row');
@@ -251,6 +280,7 @@ class BinanceAutoTrader {
         this.makeDraggable();
         this.loadDailyStats();
         this.loadUserConfig();
+        this.startUTCTimeTicker();
         
         // Start trend detection
         this.setupTrend();
@@ -262,7 +292,7 @@ class BinanceAutoTrader {
         if (!refresh && this.orderRoot && document.body.contains(this.orderRoot)) return this.orderRoot;
 
         const candidates = [];
-        // 通过“买入”按钮定位
+        // 通过"买入"按钮定位
         const allBtns = Array.from(document.querySelectorAll('button'))
             .filter(b => /买入/.test(b.textContent || '') && !/充值|卖出/.test(b.textContent || '') && this.isVisible(b));
         for (const b of allBtns) {
@@ -1687,7 +1717,7 @@ class BinanceAutoTrader {
                     }
                 }
 
-                // 退化处理：直接解析包含“成交额”的文本
+                // 退化处理：直接解析包含"成交额"的文本
                 const fallbackMatch = (modal.innerText || '').match(/成交额[^0-9]*([0-9]+(?:\.[0-9]+)?)/);
                 if (fallbackMatch) {
                     const parsed = parseFloat(fallbackMatch[1]);
@@ -2022,7 +2052,7 @@ class BinanceAutoTrader {
     updateDailyStatsDisplay() {
         if (this.dailyStats) {
             const amount = Number(this.dailyTradeAmount) || 0;
-            this.dailyStats.textContent = `今日交易: ${this.dailyTradeCount}次 / ${amount.toFixed(2)} USDT`;
+            this.dailyStats.textContent = `今日交易(UTC): ${this.dailyTradeCount}次 / ${amount.toFixed(2)} USDT`;
         }
     }
 
@@ -2677,7 +2707,7 @@ class BinanceAutoTrader {
 
     // 获取最近N个信号
     getRecentSignals(count) {
-        // 取“最近”的N个信号：数组末尾是最新，返回按时间从早到晚的顺序
+        // 取"最近"的N个信号：数组末尾是最新，返回按时间从早到晚的顺序
         const arr = this.trendData.slice(-count);
         return arr.map(data => data.trend);
     }
