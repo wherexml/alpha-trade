@@ -81,9 +81,10 @@ class BinanceAutoTrader {
             buyButton: null,
             sellButton: null,
             totalInput: null,
-            confirmButton: null,
-            lastCacheTime: 0
+            confirmButton: null
         };
+
+        this.cachedElementTimestamps = {};
         
         this.init();
     }
@@ -117,21 +118,27 @@ class BinanceAutoTrader {
     getCachedElement(key, selector, refresh = false) {
         const now = Date.now();
         const cacheExpiry = 5000; // 5秒缓存过期
-        
-        if (refresh || !this.cachedElements[key] || (now - this.cachedElements.lastCacheTime) > cacheExpiry) {
-            this.cachedElements[key] = document.querySelector(selector);
-            this.cachedElements.lastCacheTime = now;
+
+        const cachedElement = this.cachedElements[key];
+        const lastCachedAt = this.cachedElementTimestamps[key] || 0;
+        const isAttached = cachedElement ? document.body.contains(cachedElement) : false;
+        const isExpired = (now - lastCachedAt) > cacheExpiry;
+
+        if (refresh || !cachedElement || !isAttached || isExpired) {
+            const resolvedElement = typeof selector === 'function' ? selector() : document.querySelector(selector);
+            this.cachedElements[key] = resolvedElement;
+            this.cachedElementTimestamps[key] = now;
+            return resolvedElement;
         }
-        
-        return this.cachedElements[key];
+
+        return cachedElement;
     }
 
     clearElementCache() {
         Object.keys(this.cachedElements).forEach(key => {
-            if (key !== 'lastCacheTime') {
-                this.cachedElements[key] = null;
-            }
+            this.cachedElements[key] = null;
         });
+        this.cachedElementTimestamps = {};
         this.orderRoot = null;
     }
 
@@ -1293,6 +1300,7 @@ class BinanceAutoTrader {
                 buyTab = tablist ? Array.from(tablist.querySelectorAll('[role="tab"], .bn-tab__buySell')).find(t => /买入|Buy/.test(t.textContent || '')) : null;
             }
             this.cachedElements.buyTab = buyTab;
+            this.cachedElementTimestamps.buyTab = Date.now();
         }
         
         if (!buyTab) {
@@ -1379,6 +1387,7 @@ class BinanceAutoTrader {
             }
             
             this.cachedElements.totalInput = totalInput;
+            this.cachedElementTimestamps.totalInput = Date.now();
         }
 
         if (!totalInput) {
@@ -1415,6 +1424,7 @@ class BinanceAutoTrader {
                            !btn.disabled
                        );
             this.cachedElements.buyButton = buyButton;
+            this.cachedElementTimestamps.buyButton = Date.now();
         }
 
         if (!buyButton) {
